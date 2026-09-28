@@ -504,6 +504,11 @@ process.on("SIGTERM", () => child.kill());
 
     await desktop2.start();
     await until(() => supervisedOut.includes("sigterm"), "the old server was asked to exit");
+    // The port is about to free up: a command now waits for it rather than
+    // failing at once (a hopeless wait returns immediately).
+    const waitStarted = Date.now();
+    await desktop2.waitForExtension(100);
+    assert.ok(Date.now() - waitStarted >= 80 || desktop2.role() === "owner", "waits for the port instead of giving up");
     await until(() => desktop2.role() === "owner", "the desktop's copy took the port");
     assert.ok(supervisedOut.some((line) => line.startsWith("child-exit 0")), supervisedOut.join(" | "));
     await until(() => gateway.route().kind === "relay", "the waiting gateway copy now relays through the desktop's");

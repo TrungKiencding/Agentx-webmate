@@ -444,6 +444,8 @@ export class WebMateBridge {
   private standbyReason: string | null = null;
   private lastLoggedStandby: string | null = null;
   private claiming = false;
+  /** An outdated holder was asked to exit; the port should free up for the next claim. */
+  private retiring = false;
   private claimTimer: NodeJS.Timeout | null = null;
   private acceptingYield = false;
   private failedYields = 0;
@@ -633,6 +635,7 @@ export class WebMateBridge {
       this.standbyReason !== null &&
       !this.upstream &&
       !this.claiming &&
+      !this.retiring &&
       !this.acceptingYield
     );
   }
@@ -757,6 +760,7 @@ export class WebMateBridge {
       this.claimTimer = null;
     }
     let retryIn: number | null = null;
+    let retired = false;
     try {
       if (await this.listen()) {
         await this.becomeOwner();
@@ -794,7 +798,10 @@ export class WebMateBridge {
       retryIn = config.bindRetryMs;
       if (outcome.kind === "legacy") {
         this.setStandbyReason(await describeOutdatedHolder(config.bridgePort));
-        if (await this.retireOutdatedHolder()) retryIn = 500;
+        if (await this.retireOutdatedHolder()) {
+          retired = true;
+          retryIn = 500;
+        }
       } else if (outcome.kind === "refused") {
         this.setStandbyReason(await describeRefusingHolder(config.bridgePort, outcome.reason));
       } else {
@@ -808,6 +815,8 @@ export class WebMateBridge {
       retryIn = config.bindRetryMs;
     } finally {
       this.claiming = false;
+      // Until the next attempt, a command waits for the port instead of failing.
+      this.retiring = retired;
       if (retryIn !== null) this.scheduleClaim(retryIn);
       this.changed();
     }
