@@ -406,6 +406,22 @@ test("a relayed failure keeps its structured code", async () => {
   }
 });
 
+test("stopping while the port is being claimed leaves nothing listening", async () => {
+  for (let round = 0; round < 5; round++) {
+    const bridge = new WebMateBridge({ readPairing: paired });
+    const starting = bridge.start();
+    await bridge.stop(); // lands while start() is still binding
+    await starting;
+    await sleep(50);
+    assert.equal(bridge.role(), "idle", `round ${round}`);
+    // The port must be free again: another bridge binds it at once.
+    const next = new WebMateBridge({ readPairing: paired });
+    await next.start();
+    assert.equal(next.role(), "owner", `round ${round}: the port was left bound`);
+    await next.stop();
+  }
+});
+
 test("a handoff the new holder never confirms is called off, and the holder keeps port and extension", async () => {
   const owner = new WebMateBridge({ readPairing: paired, priority: 0, host: "gateway" });
   const ext = fakeExtension();

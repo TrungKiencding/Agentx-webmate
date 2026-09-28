@@ -763,6 +763,10 @@ export class WebMateBridge {
     let retired = false;
     try {
       if (await this.listen()) {
+        if (this.currentRole !== "standby") {
+          this.closeListener(); // stopped while binding
+          return;
+        }
         await this.becomeOwner();
         return;
       }
@@ -874,6 +878,10 @@ export class WebMateBridge {
           bound = await this.listen();
         } catch (error) {
           log("could not bind the handed-over port:", error instanceof Error ? error.message : String(error));
+        }
+        if (bound && this.currentRole !== "standby") {
+          this.closeListener(); // stopped while binding
+          return;
         }
         if (bound) {
           link.send({ type: "bound" });
@@ -1168,6 +1176,10 @@ export class WebMateBridge {
       relistened = await this.listen();
     } catch (error) {
       log("could not reopen the bridge port:", error instanceof Error ? error.message : String(error));
+    }
+    if (this.currentRole !== "owner") {
+      if (relistened) this.closeListener(); // stopped meanwhile
+      return;
     }
     if (relistened) {
       log(`handoff called off (${reason}); keeping the bridge`);
