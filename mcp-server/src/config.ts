@@ -83,8 +83,37 @@ function optionalDurationFromEnv(suffix: string, fallback: number): number {
   return parsed;
 }
 
+/** Any integer, negative included (priorities). */
+function intFromEnv(suffix: string, fallback: number): number {
+  const found = readEnv(suffix);
+  if (!found) return fallback;
+  return parseIntFromEnv(found.name, found.raw);
+}
+
 function stringFromEnv(suffix: string, fallback: string): string {
   return readEnv(suffix)?.raw || fallback;
+}
+
+/**
+ * The AgentX process this server runs under, as that process says in
+ * `AGENTX_MCP_HOST` ("desktop" for the Workmate app's own backend, "gateway"
+ * for the messaging gateway, …). Null for any other MCP host.
+ */
+export function hostFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.AGENTX_MCP_HOST || "").trim();
+  return raw ? raw.slice(0, 40) : null;
+}
+
+/**
+ * Bridge priority AgentX Workmate's desktop app gets without configuring
+ * anything. The app is where the person works, so its agent drives the browser
+ * directly and every other copy relays through it.
+ */
+export const DESKTOP_BRIDGE_PRIORITY = 100;
+
+/** Default priority for a host: the desktop app outranks everything else. */
+export function defaultPriorityForHost(host: string | null): number {
+  return host === "desktop" ? DESKTOP_BRIDGE_PRIORITY : 0;
 }
 
 /**
@@ -154,10 +183,37 @@ export function resolveWebmateDir(
 }
 
 const webmateDir = resolveWebmateDir();
+const bridgeHost = hostFromEnv();
 
 export const config = {
   /** Port this process listens on for the extension's outbound bridge socket. */
   bridgePort: portFromEnv("BRIDGE_PORT", 17374),
+
+  /** Which AgentX process hosts this server (see hostFromEnv); logged and shared with peers. */
+  bridgeHost,
+
+  /**
+   * Claim on the bridge port when several copies of this server run at once.
+   * Only one can hold the port; the others relay through it (see peer.ts). A
+   * copy that outranks the current holder is handed the port. Equal ranks keep
+   * whoever came first. Defaults to 100 under Workmate's desktop app, else 0.
+   */
+  bridgePriority: intFromEnv("BRIDGE_PRIORITY", defaultPriorityForHost(bridgeHost)),
+
+  /**
+   * How often a copy that can neither hold the port nor relay through its
+   * holder (an older server, or no Workmate pairing) tries the port again.
+   * A copy that relays does not poll: it learns at once when its owner leaves.
+   */
+  bindRetryMs: durationFromEnv("BIND_RETRY_MS", 5_000),
+
+  /**
+   * Handing the port over (see WebMateBridge.beginHandoff): how long the
+   * yielding owner waits for Workmate commands and in-flight commands to
+   * finish, and how long it waits for the new owner to confirm it has bound.
+   */
+  handoffDrainMs: durationFromEnv("HANDOFF_DRAIN_MS", 5_000),
+  handoffTimeoutMs: durationFromEnv("HANDOFF_TIMEOUT_MS", 5_000),
 
   /** Path segment the extension connects to. Must match the URL set in the extension's settings. */
   bridgePath: stringFromEnv("BRIDGE_PATH", "/extension"),

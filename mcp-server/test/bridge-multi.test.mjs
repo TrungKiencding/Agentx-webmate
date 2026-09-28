@@ -173,7 +173,9 @@ test("a reconnect from the same instance replaces only its own previous socket",
 
   const other = dial({ instanceId: "inst-other" });
   await other.acked;
-  const first = dial({ instanceId: "inst-same" });
+  // Never answers, so the command below is still in flight when the same
+  // instance dials again (an answering fake wins that race on loopback).
+  const first = dial({ instanceId: "inst-same", handler: () => new Promise(() => {}) });
   await first.acked;
   const pendingOnFirst = bridge.request("cloud_status", {}, undefined, { instanceId: "inst-same" }).catch((e) => e);
 

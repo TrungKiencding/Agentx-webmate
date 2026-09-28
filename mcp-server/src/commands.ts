@@ -95,17 +95,28 @@ export class CommandWatcher {
     this.now = options.now ?? (() => new Date());
   }
 
+  /**
+   * Start (or restart) watching. Only the server that holds the bridge port
+   * runs this — the commands act on the extension attached to it — so a
+   * server that gains the port starts here and one that hands it over stops.
+   */
   async start(): Promise<void> {
-    if (!this.dir || this.stopped) return;
+    if (!this.dir || this.watcherAbort) return;
+    this.stopped = false;
     const dir = this.dir;
+    // Claimed before the first await, so a second start() or a stop() in the
+    // meantime sees it.
+    const abort = new AbortController();
+    this.watcherAbort = abort;
     try {
       await mkdir(dir, { recursive: true });
     } catch (error) {
       this.log(`cannot create ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+      if (this.watcherAbort === abort) this.watcherAbort = null;
       return;
     }
-    this.watcherAbort = new AbortController();
-    void this.watchLoop(dir, this.watcherAbort.signal);
+    if (abort.signal.aborted) return;
+    void this.watchLoop(dir, abort.signal);
     this.poll = setInterval(() => void this.scan(), this.pollMs);
     this.poll.unref?.();
     await this.scan();
@@ -117,6 +128,16 @@ export class CommandWatcher {
     this.watcherAbort = null;
     if (this.poll) clearInterval(this.poll);
     this.poll = null;
+  }
+
+  /** Resolve once no command is running (their outcomes recorded), or after `timeoutMs`. */
+  async drain(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.inFlight.size > 0) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return true;
   }
 
   private async watchLoop(dir: string, signal: AbortSignal): Promise<void> {

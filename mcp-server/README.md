@@ -268,6 +268,11 @@ AgentX WebMate exposes roughly fifty primitives internally — `click_ax`, `type
 | `WEBMATE_STATE_FILE` | `<dir>/state.json` | Bridge state published for Workmate; `off` disables the writer. |
 | `WEBMATE_COMMANDS_DIR` | `<dir>/commands` | Command files from Workmate (`prepare_update`, `reload`, `resume`); `off` disables the watcher. |
 | `WEBMATE_PREPARE_UPDATE_TIMEOUT_MS` | `60000` | How long `prepare_update` waits for in-flight runs to finish. |
+| `WEBMATE_BRIDGE_PRIORITY` | `100` under Workmate's desktop app, else `0` | Claim on the bridge port when several copies of this server run at once; a copy that outranks the holder is handed the port (see below). |
+| `WEBMATE_BIND_RETRY_MS` | `5000` | How often a copy that can neither hold the port nor relay through its holder tries the port again. |
+| `WEBMATE_HANDOFF_DRAIN_MS` | `5000` | How long a copy handing the port over lets Workmate commands and in-flight commands finish. |
+| `WEBMATE_HANDOFF_TIMEOUT_MS` | `5000` | How long it then waits for the new holder to confirm before taking the port back. |
+| `AGENTX_MCP_HOST` | set by AgentX | Which AgentX process runs this copy (`desktop`, `gateway`, …). Named in logs and `state.json`; `desktop` sets the default priority to 100. |
 
 Each variable also accepts the upstream `WEBBRAIN_*` spelling; when both are
 set, `WEBMATE_*` wins.
@@ -288,8 +293,43 @@ The server publishes `state.json` (`listening`, `connected`, `browser`,
 `lastCommand`) through a temp file and rename on every change, and consumes
 `commands/<uuid>.json` files: `prepare_update` asks the extension to drain
 (no new runs) and polls until it reports idle, `reload` restarts it, `resume`
-lifts a drain. Only the process that holds the port writes or consumes these;
-the loser of a port conflict stays silent.
+lifts a drain. Only the copy that holds the port writes or consumes these; a
+standby (below) stays silent, and a copy that is handed the port takes both
+over. `state.json` also names the holder's `host` and `priority` and the
+`standbys` relaying through it.
+
+## Several copies of the server at once
+
+The extension dials one port, so one process holds it: the **owner**. AgentX
+runs a copy of this server in every process that loads MCP tools — the
+Workmate desktop app's backend, the messaging gateway (which outlives the app
+on purpose), slash-command workers — so the others are **standbys**: each
+connects to the owner on `ws://127.0.0.1:<port>/peer` and relays its commands
+through it, and every host's tools keep working. `webmate_connection` says
+which copy holds the port when it relays.
+
+- **Priority decides the owner.** A standby that outranks the owner
+  (`WEBMATE_BRIDGE_PRIORITY`; 100 when AgentX marks the copy
+  `AGENTX_MCP_HOST=desktop`, else 0) is handed the port: the owner finishes
+  Workmate commands it already picked up, closes its listener (open sockets
+  stay up), waits for the newcomer to bind, lets commands in flight finish,
+  then releases the extension with close code 1012 — it redials at once and
+  lands on the new owner. If the newcomer never confirms, the owner takes the
+  port back. Equal priorities keep whoever came first.
+- **When the owner leaves**, its standbys learn it at once from their peer
+  socket and one of them takes the port; the extension follows within a
+  second.
+- **Relaying needs the Workmate pairing.** The peer socket carries the same
+  authority as the extension socket, so the owner accepts it only from a
+  native client (no `Origin` header) whose hello carries `pairing.json`'s
+  token, and only the four run-level commands travel through it. Without a
+  pairing file a standby does not relay: its tools report
+  `WEBMATE_PORT_IN_USE` and it tries the port again every
+  `WEBMATE_BIND_RETRY_MS`.
+- **Older servers** (1.2.x) cannot relay or hand over; a standby names them
+  in its error. The desktop app's copy asks one to exit only when it is this
+  server's own bundle running under AgentX's stdio watchdog, whose host starts
+  it again from the current bundle — nothing else is ever signalled.
 
 Every failing tool result starts with a structured code and repeats it as
 `structuredContent.code`, so Workmate can react without parsing prose:
