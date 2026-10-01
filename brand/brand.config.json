@@ -20,7 +20,7 @@
   },
 
   "services": {
-    "secondBrainBaseUrl": "https://brain.dev-server.cloud/",
+    "secondBrainBaseUrl": "https://agentx.astralx.com.vn/keys/",
     "litellmBaseUrl": "https://aigw.dev-server.cloud/",
     "oidcIssuer": "https://agentx.astralx.com.vn/auth/realms/agent-hub",
     "oidcClientId": "agentx-workmate",

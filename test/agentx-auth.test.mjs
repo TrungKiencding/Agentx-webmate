@@ -39,7 +39,7 @@ const ISSUER = 'https://identity.example.test/realms/agentx';
 const CLIENT_ID = 'agentx-workmate';
 const TOKEN_ENDPOINT = `${ISSUER}/protocol/openid-connect/token`;
 const CONFIG = Object.freeze({
-  secondBrainBaseUrl: 'https://brain.dev-server.cloud',
+  secondBrainBaseUrl: 'https://agentx.astralx.com.vn/keys',
   litellmBaseUrl: 'https://aigw.dev-server.cloud/v1',
   oidcIssuer: ISSUER,
   oidcClientId: CLIENT_ID,
@@ -1666,7 +1666,7 @@ test('both branded targets gate the side panel and keep Cloud management in sett
     assert.match(settings, /createAgentXCloudSettingsController/);
     assert.match(settings, /renderAgentXCloudMultimodalSettings/);
     assert.doesNotMatch(settings, /btn-manage-billing|api\.webbrain\.one\/account/);
-    assert.match(runtime, /https:\/\/brain\.dev-server\.cloud/);
+    assert.match(runtime, /"secondBrainBaseUrl": "https:\/\/agentx\.astralx\.com\.vn\/keys"/);
     assert.match(runtime, /https:\/\/aigw\.dev-server\.cloud\/v1/);
     assert.match(runtime, /https:\/\/agentx\.astralx\.com\.vn\/auth\/realms\/agent-hub/);
     assert.match(runtime, /"oidcClientId": "agentx-workmate"/);
