@@ -525,7 +525,7 @@ test('the interactive sign-in carries a login_hint when Workmate asks for one', 
   assert.equal(authUrl.searchParams.get('prompt'), null, 'the interactive flow never asks for prompt=none');
 });
 
-test('LiteLLM model list overrides stale Second Brain model metadata', async () => {
+test('the chat picker is the key service chat list, as far as LiteLLM serves it', async () => {
   const fake = createApi({
     [AGENTX_SESSION_STORAGE_KEY]: session(),
   });
@@ -558,13 +558,142 @@ test('LiteLLM model list overrides stale Second Brain model metadata', async () 
 
   assert.deepEqual(modelKeyRequestBody, { rotate: false });
   assert.equal(gatewayAuthorization, 'Bearer sk-legacy-key');
-  assert.deepEqual(result.credential.models, ['model-primary', 'model-secondary']);
-  assert.equal(result.credential.model, 'model-primary');
+  // LiteLLM decides what is live (no 'hard-coded-external-model'); the key
+  // service decides what is for chat ('model-primary' is reachable but was
+  // never granted for chat — a feature model, say).
+  assert.deepEqual(result.credential.models, ['model-secondary']);
+  assert.equal(result.credential.model, 'model-secondary');
   assert.equal(result.credential.models.includes('hard-coded-external-model'), false);
+  assert.deepEqual(result.credential.reachableModels, ['model-primary', 'model-secondary']);
   assert.equal(
     fake.values[AGENTX_CREDENTIAL_STORAGE_KEY].records[0].model,
-    'model-primary',
+    'model-secondary',
   );
+});
+
+const ROLE_KEY_BODY = Object.freeze({
+  key: 'sk-role-key',
+  base_url: 'https://aigw.dev-server.cloud',
+  models: ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8'],
+  default_model: 'MiniMax/MiniMax-M3',
+  web_search_model: 'perplexity/sonar',
+  image_model: 'google/gemini-3.1-flash-lite-image',
+  vision_model: 'Qwen/Qwen3.6-35B-A3B-FP8',
+  status: 'reused',
+});
+// What LiteLLM 1.82.6 lists for that key: the whole allowlist, feature models included.
+const ROLE_CATALOG = Object.freeze({
+  data: [
+    { id: 'Qwen/Qwen3.5-122B-A10B-FP8', mode: 'chat' },
+    { id: 'MiniMax/MiniMax-M3', mode: 'chat', supports_vision: true },
+    { id: 'google/gemini-3.1-flash-lite-image', mode: 'image_generation' },
+    { id: 'perplexity/sonar', mode: 'chat' },
+    { id: 'Qwen/Qwen3.6-35B-A3B-FP8', mode: 'chat' },
+  ],
+});
+
+function roleFetch({ onKey, catalog = ROLE_CATALOG, keyBody = ROLE_KEY_BODY } = {}) {
+  return async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/v1/model-key`) {
+      onKey?.();
+      return jsonResponse(keyBody);
+    }
+    if (requestUrl === `${CONFIG.litellmBaseUrl}/models`) return jsonResponse(catalog);
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+}
+
+test('feature models never reach the chat picker; the vision model is the key service one', async () => {
+  const fake = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session() });
+  const result = await service(fake.api, roleFetch()).retryProvision();
+  const cred = result.credential;
+
+  assert.deepEqual(cred.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
+  assert.equal(cred.model, 'MiniMax/MiniMax-M3');
+  for (const feature of ['perplexity/sonar', 'google/gemini-3.1-flash-lite-image', 'Qwen/Qwen3.6-35B-A3B-FP8']) {
+    assert.equal(cred.models.includes(feature), false, `${feature} must not be a chat model`);
+    assert.equal(cred.transcriptionModels.includes(feature), false, `${feature} must not be offered for transcription`);
+  }
+  assert.equal(cred.visionModel, 'Qwen/Qwen3.6-35B-A3B-FP8');
+  assert.equal(cred.visionModels[0], 'Qwen/Qwen3.6-35B-A3B-FP8');
+  assert.equal(cred.visionModels.includes('perplexity/sonar'), false);
+  assert.equal(cred.visionModels.includes('google/gemini-3.1-flash-lite-image'), false);
+  assert.equal(cred.reachableModels.length, 5);
+});
+
+test('a record from an older build asks the key service once for the chat list', async () => {
+  const cached = credential({
+    key: 'sk-role-key',
+    models: ROLE_CATALOG.data.map((m) => m.id),
+    model: 'perplexity/sonar',
+  });
+  const fake = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session(),
+    [AGENTX_CREDENTIAL_STORAGE_KEY]: { version: 1, records: [cached] },
+  });
+  let keyRequests = 0;
+  const cloud = service(fake.api, roleFetch({ onKey: () => { keyRequests += 1; } }));
+
+  const first = await cloud.retryProvision();
+  assert.equal(keyRequests, 1);
+  assert.deepEqual(first.credential.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
+  // A feature model that was the selected chat model gives way to the default.
+  assert.equal(first.credential.model, 'MiniMax/MiniMax-M3');
+
+  // The stored record now carries the grant: the next launch only probes LiteLLM.
+  const second = await cloud.retryProvision();
+  assert.equal(keyRequests, 1);
+  assert.deepEqual(second.credential.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
+});
+
+test('a key that reaches something new asks for the grant again', async () => {
+  const fake = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session() });
+  let keyRequests = 0;
+  let catalog = { data: ROLE_CATALOG.data.filter((m) => m.id !== 'Qwen/Qwen3.6-35B-A3B-FP8') };
+  let keyBody = { ...ROLE_KEY_BODY, vision_model: '' };
+  const fetchImpl = async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl.endsWith('/v1/model-key')) {
+      keyRequests += 1;
+      return jsonResponse(keyBody);
+    }
+    return jsonResponse(catalog);
+  };
+  const cloud = service(fake.api, fetchImpl);
+  const first = await cloud.retryProvision();
+  assert.equal(first.credential.visionModel, '');
+  assert.equal(keyRequests, 1);
+
+  // The operator names a vision model: the key reaches one model more.
+  catalog = ROLE_CATALOG;
+  keyBody = ROLE_KEY_BODY;
+  const second = await cloud.retryProvision();
+  assert.equal(keyRequests, 2);
+  assert.equal(second.credential.visionModel, 'Qwen/Qwen3.6-35B-A3B-FP8');
+  assert.deepEqual(second.credential.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
+});
+
+test('a grant refresh that fails keeps the chat list the record already had', async () => {
+  const cached = credential({
+    key: 'sk-role-key',
+    models: ['MiniMax/MiniMax-M3'],
+    model: 'MiniMax/MiniMax-M3',
+    serviceModels: ['MiniMax/MiniMax-M3'],
+    featureModels: ['perplexity/sonar'],
+    reachableModels: ['MiniMax/MiniMax-M3', 'perplexity/sonar'],
+  });
+  const fake = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session(),
+    [AGENTX_CREDENTIAL_STORAGE_KEY]: { version: 1, records: [cached] },
+  });
+  const result = await service(fake.api, async (url) => {
+    if (String(url).endsWith('/v1/model-key')) return jsonResponse({ error: 'down' }, 503);
+    return jsonResponse({ data: [{ id: 'MiniMax/MiniMax-M3' }, { id: 'perplexity/sonar' }, { id: 'new-model' }] });
+  }).retryProvision();
+
+  assert.deepEqual(result.credential.models, ['MiniMax/MiniMax-M3']);
+  assert.equal(result.credential.models.includes('perplexity/sonar'), false);
 });
 
 test('callback state is validated before OAuth errors or token exchange', async () => {
@@ -610,7 +739,7 @@ test('callback state is validated before OAuth errors or token exchange', async 
 });
 
 test('cached key is reused after one successful LiteLLM probe', async () => {
-  const cached = credential();
+  const cached = credential({ serviceModels: ['model-a'], featureModels: [], reachableModels: ['model-a'] });
   const fake = createApi({
     [AGENTX_SESSION_STORAGE_KEY]: session(),
     [AGENTX_CREDENTIAL_STORAGE_KEY]: { version: 1, records: [cached] },
@@ -1008,6 +1137,53 @@ test('Cloud vision sidecar uses the gateway key and ignores an empty selection',
     visionModelsFromGateway(['model-a', 'Qwen/Qwen2.5-VL-7B']),
     ['Qwen/Qwen2.5-VL-7B'],
   );
+});
+
+test('the Cloud vision sidecar calls the feature vision model the key reaches outside the chat list', () => {
+  const cloudConfig = {
+    agentxCloudManaged: true,
+    apiKey: 'sk-role-key',
+    baseUrl: CONFIG.litellmBaseUrl,
+    models: ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8'],
+    agentxCloudReachableModels: ROLE_CATALOG.data.map((m) => m.id),
+    agentxCloudVisionModels: ['Qwen/Qwen3.6-35B-A3B-FP8', 'MiniMax/MiniMax-M3'],
+    agentxCloudVisionModel: 'Qwen/Qwen3.6-35B-A3B-FP8',
+  };
+  const sidecar = resolveCloudVisionSidecar(cloudConfig);
+  assert.equal(sidecar.model, 'Qwen/Qwen3.6-35B-A3B-FP8');
+  assert.ok(sidecar.models.includes('Qwen/Qwen3.6-35B-A3B-FP8'));
+  // Without the reachable list (a config from an older build) it is not called.
+  assert.equal(resolveCloudVisionSidecar({ ...cloudConfig, agentxCloudReachableModels: undefined }), null);
+});
+
+test('installing a credential defaults the vision model but keeps a choice made in Settings', async () => {
+  const { installCloudCredential } = await import(
+    pathToFileURL(path.join(CHROME_ROOT, 'src/agentx/cloud-provider-install.js')).href
+  );
+  const fake = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session() });
+  const { credential: cred } = await service(fake.api, roleFetch()).retryProvision();
+  const providerState = { providers: { webbrain_cloud: { type: 'openai', category: 'cloud' } } };
+  const send = async (action, data = {}) => {
+    if (action === 'update_provider') {
+      Object.assign(providerState.providers.webbrain_cloud, data.config);
+      return { ok: true };
+    }
+    if (action === 'get_providers') return structuredClone(providerState);
+    if (action === 'set_active_provider') return { ok: true };
+    throw new Error(`Unexpected background action: ${action}`);
+  };
+
+  await installCloudCredential(send, cred);
+  const installed = providerState.providers.webbrain_cloud;
+  assert.deepEqual(installed.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
+  assert.equal(installed.model, 'MiniMax/MiniMax-M3');
+  assert.equal(installed.agentxCloudVisionModel, 'Qwen/Qwen3.6-35B-A3B-FP8');
+  assert.equal(installed.agentxCloudReachableModels.length, 5);
+
+  // Somebody turns the vision model off in Settings; the next install respects it.
+  Object.assign(installed, { agentxCloudVisionModel: '', agentxCloudVisionModelUserSet: true });
+  await installCloudCredential(send, cred);
+  assert.equal(providerState.providers.webbrain_cloud.agentxCloudVisionModel, '');
 });
 
 // ─── Sign-in gate ─────────────────────────────────────────────────────────

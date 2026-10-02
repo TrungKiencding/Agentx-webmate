@@ -290,7 +290,7 @@ export function createAgentXCloudSettingsController({
           await sendToBackground('update_provider', {
             providerId: PROVIDER_ID,
             markConfigured: false,
-            config: { agentxCloudVisionModel: model },
+            config: { agentxCloudVisionModel: model, agentxCloudVisionModelUserSet: true },
           });
           await refreshProviders();
           paint({
@@ -328,7 +328,7 @@ export function createAgentXCloudSettingsController({
           await sendToBackground('update_provider', {
             providerId: PROVIDER_ID,
             markConfigured: false,
-            config: { agentxCloudVisionModel: '' },
+            config: { agentxCloudVisionModel: '', agentxCloudVisionModelUserSet: true },
           });
           await refreshProviders();
           paint({

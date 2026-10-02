@@ -1,11 +1,14 @@
 import { AGENTX_RUNTIME_CONFIG } from './runtime-config.js';
 import {
+  chatModelsFromGrant,
+  featureModelsFromKey,
   gatewayCatalogFromPayload,
+  normalizeGatewayModels,
   pickGatewayModel,
   pickGatewayTranscriptionModel,
   pickGatewayVisionModel,
   transcriptionModelsFromGateway,
-  visionModelsFromGateway,
+  visionModelsForGrant,
 } from './cloud-models.js';
 
 export const AGENTX_SESSION_STORAGE_KEY = 'agentxAuthSessionV1';
@@ -1003,15 +1006,53 @@ export function createAgentXCloudService(options = {}) {
         'LiteLLM không trả về mô hình nào cho khóa này.',
       );
     }
+    return catalog;
+  }
+
+  /**
+   * The model lists one credential carries, from what LiteLLM serves now
+   * (`catalog`) and what the key service granted (`grant`): the chat picker,
+   * the vision and transcription pickers, and the defaults.
+   */
+  function modelsForGrant(catalog, grant, { model = '', visionModel = '', transcriptionModel = '' } = {}) {
+    const chatModels = chatModelsFromGrant(catalog.models, grant.serviceModels, grant.featureModels);
+    const visionModels = visionModelsForGrant(
+      chatModels,
+      catalog.visionFromInfo,
+      grant.serviceVisionModel,
+      catalog.models,
+    );
+    // A transcription model is not a chat model, so it is looked for among
+    // everything the key reaches — except the feature models.
+    const features = new Set(normalizeGatewayModels(grant.featureModels));
+    const transcriptionModels = transcriptionModelsFromGateway(
+      normalizeGatewayModels(catalog.models).filter((id) => !features.has(id)),
+      catalog.transcriptionFromInfo,
+    );
     return {
-      models: catalog.models,
+      models: chatModels,
+      reachableModels: normalizeGatewayModels(catalog.models),
+      model: pickGatewayModel(model, chatModels, grant.defaultModel),
       visionFromInfo: catalog.visionFromInfo,
-      visionModels: visionModelsFromGateway(catalog.models, catalog.visionFromInfo),
+      visionModels,
+      // The key service's vision model is the default; a model already chosen stays.
+      visionModel: pickGatewayVisionModel(visionModel || grant.serviceVisionModel, visionModels),
       transcriptionFromInfo: catalog.transcriptionFromInfo,
-      transcriptionModels: transcriptionModelsFromGateway(
-        catalog.models,
-        catalog.transcriptionFromInfo,
-      ),
+      transcriptionModels,
+      transcriptionModel: pickGatewayTranscriptionModel(transcriptionModel, transcriptionModels),
+    };
+  }
+
+  /** What the key service granted beside the key: the chat list and one model per feature. */
+  function grantFromKeyBody(body) {
+    return {
+      serviceModels: normalizeGatewayModels(body.models),
+      defaultModel: String(body.default_model || '').trim(),
+      featureModels: featureModelsFromKey(body),
+      webSearchModel: String(body.web_search_model || '').trim(),
+      imageModel: String(body.image_model || '').trim(),
+      // The key service's vision model; `visionModel` on a credential is the one in use.
+      serviceVisionModel: String(body.vision_model || '').trim(),
     };
   }
 
@@ -1040,7 +1081,7 @@ export function createAgentXCloudService(options = {}) {
       throw error;
     }
     const key = String(body.json.key || '');
-    const responseDefaultModel = String(body.json.default_model || '').trim();
+    const grant = grantFromKeyBody(body.json);
     const baseUrl = normalizeHttpsBaseUrl(
       body.json.base_url || configuredLiteLlmBaseUrl,
       'LiteLLM base_url',
@@ -1052,23 +1093,17 @@ export function createAgentXCloudService(options = {}) {
         'Second Brain trả về khóa mô hình không hợp lệ.',
       );
     }
-    // LiteLLM is the source of truth. Second Brain metadata may be absent or
-    // stale, so never install a model until the issued key can actually see it.
+    // LiteLLM says what is live; the key service says which of it is for chat.
+    // Never install a model until the issued key can actually reach it, and
+    // never offer a feature model (web search, images, vision) in a picker.
     const catalog = await discoverGatewayCatalog(key, baseUrl);
-    const model = pickGatewayModel(responseDefaultModel, catalog.models);
     return {
       subject: session.user.subject,
       authority: secondBrainBaseUrl,
       key,
       baseUrl,
-      models: catalog.models,
-      model,
-      visionFromInfo: catalog.visionFromInfo,
-      visionModels: catalog.visionModels,
-      visionModel: '',
-      transcriptionFromInfo: catalog.transcriptionFromInfo,
-      transcriptionModels: catalog.transcriptionModels,
-      transcriptionModel: '',
+      ...modelsForGrant(catalog, grant, { model: grant.defaultModel }),
+      ...grant,
       keyAlias: String(body.json.key_alias || ''),
       keyToken: String(body.json.token || ''),
       account: String(body.json.account || ''),
@@ -1082,6 +1117,14 @@ export function createAgentXCloudService(options = {}) {
     };
   }
 
+  /** Whether a cached record's grant may be out of date with what its key reaches now. */
+  function grantIsStale(record, liveModels) {
+    if (!Array.isArray(record.serviceModels) || !Array.isArray(record.reachableModels)) return true;
+    const before = new Set(normalizeGatewayModels(record.reachableModels));
+    const now = normalizeGatewayModels(liveModels);
+    return now.length !== before.size || now.some((id) => !before.has(id));
+  }
+
   async function provisionModelKey(session, options = {}) {
     const records = await credentialRecords();
     const cached = records.find((record) => credentialIsUsable(
@@ -1092,24 +1135,33 @@ export function createAgentXCloudService(options = {}) {
     if (cached && options.rotate !== true) {
       const probe = await probeCredential(cached);
       if (probe.ok) {
-        const visionModels = visionModelsFromGateway(probe.models, probe.visionFromInfo);
-        const transcriptionModels = transcriptionModelsFromGateway(
-          probe.models,
-          probe.transcriptionFromInfo,
-        );
+        if (grantIsStale(cached, probe.models)) {
+          // The key reaches something other than it did (an operator changed the
+          // grant), or this record predates the chat/feature split: ask the key
+          // service what is for chat now. It hands back the same key.
+          try {
+            const credential = await requestModelKey(session, { rotate: false });
+            const merged = {
+              ...credential,
+              ...modelsForGrant(
+                { models: credential.reachableModels, visionFromInfo: credential.visionFromInfo, transcriptionFromInfo: credential.transcriptionFromInfo },
+                credential,
+                { model: cached.model, transcriptionModel: cached.transcriptionModel },
+              ),
+            };
+            await saveCredential(merged);
+            return merged;
+          } catch (error) {
+            // Offline or refused: keep going with what this record knows.
+          }
+        }
         const refreshed = {
           ...cached,
-          models: probe.models,
-          model: pickGatewayModel(cached.model, probe.models),
-          visionFromInfo: probe.visionFromInfo,
-          visionModels,
-          visionModel: pickGatewayVisionModel(cached.visionModel, visionModels),
-          transcriptionFromInfo: probe.transcriptionFromInfo,
-          transcriptionModels,
-          transcriptionModel: pickGatewayTranscriptionModel(
-            cached.transcriptionModel,
-            transcriptionModels,
-          ),
+          ...modelsForGrant(probe, cached, {
+            model: cached.model,
+            visionModel: cached.visionModel,
+            transcriptionModel: cached.transcriptionModel,
+          }),
           provisionOutcome: 'reused-local',
           warningCode: '',
         };

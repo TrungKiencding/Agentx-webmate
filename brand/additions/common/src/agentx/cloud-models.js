@@ -1,4 +1,4 @@
-const VISION_MODEL_RE = /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|[-_/]vl(?:[-_/]|$)|vision/;
+const VISION_MODEL_RE = /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|kimi-k(?:-?3|2\.[5-9])|minimax-m3|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|[-_/]vl(?:[-_/]|$)|vision/;
 // Transcription models are named far less consistently than vision ones, so
 // this covers the common hosted families (OpenAI/Groq Whisper, gpt-4o-transcribe,
 // Mistral Voxtral, ElevenLabs Scribe, Deepgram Nova, NVIDIA Canary/Parakeet)
@@ -70,6 +70,48 @@ export function transcriptionModelsFromGateway(models, transcriptionFromInfo = [
   return guessed.length ? guessed : list;
 }
 
+/**
+ * The models the key service names for a feature rather than for chat — web
+ * search, image generation, vision. The key reaches them; no picker shows them.
+ */
+export function featureModelsFromKey(body = {}) {
+  return normalizeGatewayModels([
+    body?.web_search_model,
+    body?.image_model,
+    body?.vision_model,
+  ]);
+}
+
+/**
+ * What the chat picker offers: the key service's chat list (`models`, in the
+ * order its operator chose — the default leads) as far as LiteLLM serves it
+ * right now, never a feature model. LiteLLM's `/models` lists the key's whole
+ * allowlist, feature models included, so it decides only what is live, not
+ * what is a chat model. With no usable chat list (an older service, or one
+ * whose answer lists nothing LiteLLM still serves) every live model but the
+ * feature models is offered.
+ */
+export function chatModelsFromGrant(catalog, serviceModels = [], featureModels = []) {
+  const reachable = normalizeGatewayModels(catalog);
+  const features = new Set(normalizeGatewayModels(featureModels));
+  const live = new Set(reachable);
+  const granted = normalizeGatewayModels(serviceModels)
+    .filter((id) => !features.has(id) && live.has(id));
+  if (granted.length) return granted;
+  return reachable.filter((id) => !features.has(id));
+}
+
+/**
+ * The Settings vision picker: the key service's vision model first (the
+ * default), then the chat models that read images themselves.
+ */
+export function visionModelsForGrant(chatModels, visionFromInfo = [], visionModel = '', catalog = []) {
+  const reachable = new Set(normalizeGatewayModels(catalog));
+  const preferred = String(visionModel || '').trim();
+  const lead = preferred && (!reachable.size || reachable.has(preferred)) ? [preferred] : [];
+  return normalizeGatewayModels([...lead, ...visionModelsFromGateway(chatModels, visionFromInfo)]);
+}
+
 export function pickGatewayModel(preferred, models, fallback = '') {
   const list = normalizeGatewayModels(models);
   const wanted = String(preferred || '').trim();
@@ -99,8 +141,11 @@ export function resolveCloudVisionSidecar(cloudConfig = {}) {
   const baseUrl = String(cloudConfig.baseUrl || '').trim();
   if (!apiKey || !baseUrl) return null;
   const models = normalizeGatewayModels(cloudConfig.models);
+  // The vision model is a feature model: reachable with the key but not in the
+  // chat list, so it is checked against everything the key reaches.
+  const reachable = normalizeGatewayModels([...models, ...normalizeGatewayModels(cloudConfig.agentxCloudReachableModels)]);
   const visionModels = normalizeGatewayModels(cloudConfig.agentxCloudVisionModels)
-    .filter((model) => models.includes(model));
+    .filter((model) => reachable.includes(model));
   const allowlist = visionModels.length ? visionModels : models;
   const model = pickGatewayVisionModel(cloudConfig.agentxCloudVisionModel, allowlist);
   if (!model) return null;
