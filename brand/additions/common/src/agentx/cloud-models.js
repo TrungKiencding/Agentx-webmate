@@ -72,13 +72,15 @@ export function transcriptionModelsFromGateway(models, transcriptionFromInfo = [
 
 /**
  * The models the key service names for a feature rather than for chat — web
- * search, image generation, vision. The key reaches them; no picker shows them.
+ * search, image generation, vision, speech (text-to-speech). The key reaches
+ * them; no picker shows them.
  */
 export function featureModelsFromKey(body = {}) {
   return normalizeGatewayModels([
     body?.web_search_model,
     body?.image_model,
     body?.vision_model,
+    body?.speech_model,
   ]);
 }
 

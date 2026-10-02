@@ -1053,6 +1053,8 @@ export function createAgentXCloudService(options = {}) {
       imageModel: String(body.image_model || '').trim(),
       // The key service's vision model; `visionModel` on a credential is the one in use.
       serviceVisionModel: String(body.vision_model || '').trim(),
+      // Text-to-speech: reachable with the key, never offered for chat, vision or transcription.
+      speechModel: String(body.speech_model || '').trim(),
     };
   }
 

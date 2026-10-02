@@ -579,6 +579,7 @@ const ROLE_KEY_BODY = Object.freeze({
   web_search_model: 'perplexity/sonar',
   image_model: 'google/gemini-3.1-flash-lite-image',
   vision_model: 'Qwen/Qwen3.6-35B-A3B-FP8',
+  speech_model: 'google/gemini-3.8-flash-lite-tts',
   status: 'reused',
 });
 // What LiteLLM 1.82.6 lists for that key: the whole allowlist, feature models included.
@@ -589,6 +590,9 @@ const ROLE_CATALOG = Object.freeze({
     { id: 'google/gemini-3.1-flash-lite-image', mode: 'image_generation' },
     { id: 'perplexity/sonar', mode: 'chat' },
     { id: 'Qwen/Qwen3.6-35B-A3B-FP8', mode: 'chat' },
+    // Text-to-speech: its name matches the vision heuristic (`gemini`), so only the
+    // key service's speech_model field keeps it out of every picker.
+    { id: 'google/gemini-3.8-flash-lite-tts', mode: 'audio_speech' },
   ],
 });
 
@@ -611,7 +615,12 @@ test('feature models never reach the chat picker; the vision model is the key se
 
   assert.deepEqual(cred.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
   assert.equal(cred.model, 'MiniMax/MiniMax-M3');
-  for (const feature of ['perplexity/sonar', 'google/gemini-3.1-flash-lite-image', 'Qwen/Qwen3.6-35B-A3B-FP8']) {
+  for (const feature of [
+    'perplexity/sonar',
+    'google/gemini-3.1-flash-lite-image',
+    'Qwen/Qwen3.6-35B-A3B-FP8',
+    'google/gemini-3.8-flash-lite-tts',
+  ]) {
     assert.equal(cred.models.includes(feature), false, `${feature} must not be a chat model`);
     assert.equal(cred.transcriptionModels.includes(feature), false, `${feature} must not be offered for transcription`);
   }
@@ -619,7 +628,9 @@ test('feature models never reach the chat picker; the vision model is the key se
   assert.equal(cred.visionModels[0], 'Qwen/Qwen3.6-35B-A3B-FP8');
   assert.equal(cred.visionModels.includes('perplexity/sonar'), false);
   assert.equal(cred.visionModels.includes('google/gemini-3.1-flash-lite-image'), false);
-  assert.equal(cred.reachableModels.length, 5);
+  assert.equal(cred.visionModels.includes('google/gemini-3.8-flash-lite-tts'), false);
+  assert.equal(cred.speechModel, 'google/gemini-3.8-flash-lite-tts');
+  assert.equal(cred.reachableModels.length, 6);
 });
 
 test('a record from an older build asks the key service once for the chat list', async () => {
@@ -1178,7 +1189,7 @@ test('installing a credential defaults the vision model but keeps a choice made 
   assert.deepEqual(installed.models, ['MiniMax/MiniMax-M3', 'Qwen/Qwen3.5-122B-A10B-FP8']);
   assert.equal(installed.model, 'MiniMax/MiniMax-M3');
   assert.equal(installed.agentxCloudVisionModel, 'Qwen/Qwen3.6-35B-A3B-FP8');
-  assert.equal(installed.agentxCloudReachableModels.length, 5);
+  assert.equal(installed.agentxCloudReachableModels.length, 6); // the speech model too: reachable, never offered
 
   // Somebody turns the vision model off in Settings; the next install respects it.
   Object.assign(installed, { agentxCloudVisionModel: '', agentxCloudVisionModelUserSet: true });
