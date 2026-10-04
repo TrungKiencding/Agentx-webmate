@@ -44,6 +44,13 @@ This changelog was generated from the repository Git history and release tags. V
 - **Loading the social-media downloader twice into one page no longer throws.** The v4 auto-arm block left a top-level `const` after the library's IIFE, so the second evaluation in the same main-world realm — the `document_start` content script plus the injection every `download_social_media` call performs, or two tool runs on one tab — died at parse time with `Identifier '_SMD_MSE_AUTOARM_HOSTS' has already been declared`, an uncaught SyntaxError logged on every supported social host. The block now lives in its own IIFE, so a re-evaluation cleanly replaces `window.SocialMediaDownloader` (the refresh that un-stales an old copy after an extension update), and a regression test evaluates the file twice in one realm to keep it that way.
 - **Clicking a `javascript:` link no longer files a Content Security Policy error against the extension.** A synthetic click on `<a href="javascript:…">` asks the browser to run the href as an inline script, and that navigation is checked against the CSP of the world the click came from — so it was refused ("Running the JavaScript URL violates the following Content Security Policy directive `script-src 'self' …`") and, because the click came from the extension's content script, the violation landed on the extension's Errors page rather than the page's own console. Seen on webmail whose menu items are `javascript:void(0)` placeholders, where every agent click logged another entry. Placeholder hrefs are now cancelled by a listener that runs after every one of the page's own handlers, so the page still sees the click exactly as before and only the meaningless navigation goes away — and the suppressor is released the instant the synthetic click ends, so a real click of yours on the same link is untouched. An href carrying real code is still allowed to run, and is cancelled only once this page has actually been observed refusing one; from then on the click reports the refused URL instead of returning a clean success, because in that case the link's whole action never ran.
 
+## [1.0.8] - 2026-10-04
+
+### Changed
+- Khoá và model lấy từ AgentX SSO; bộ chọn chỉ hiển thị model chat được cấp, tách model tìm web, tạo ảnh, đọc ảnh và đọc to.
+- Cầu nối MCP 1.3.0 chia sẻ kết nối giữa Workmate và gateway, ưu tiên ứng dụng desktop và tự chuyển tiếp khi đổi chủ cổng.
+- WebMate mới nhất được đóng gói cùng AgentX Workmate 1.0.4.
+
 ## [1.0.7] - 2026-09-28
 
 ### Changed
