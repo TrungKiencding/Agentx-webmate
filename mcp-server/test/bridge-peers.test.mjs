@@ -236,6 +236,8 @@ test("the copy that outranks the holder is handed the port, and the extension fo
     await until(() => gateway.route().kind === "relay", "the gateway's copy relays through the desktop's");
     assert.equal(gateway.route().owner.host, "desktop");
     assert.deepEqual(ext.closes, [1012], "handed over once, with a close code the extension redials on at once");
+    // The owner records hello before its acknowledgement reaches the browser.
+    await until(() => ext.acks === 2, "the extension acknowledged the new owner");
     assert.equal(ext.acks, 2);
 
     // Telegram still drives the browser, now through the desktop's copy.
