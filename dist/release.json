@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.0.7",
-  "publishedAt": "2026-09-28T06:03:07.954Z",
+  "version": "1.0.8",
+  "publishedAt": "2026-10-04T17:03:14.919Z",
   "chrome": {
-    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.7/agentx-webmate-chrome-1.0.7.zip",
-    "sha256": "3996c56afd6364fce991b1f0e773669863a9f697f93a1d532d47d748aed67408",
-    "bytes": 5185417
+    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.8/agentx-webmate-chrome-1.0.8.zip",
+    "sha256": "51e09fe2f7e98f2fa9c30db22f7440c6be380849f93af6986a5542381b0ba9fc",
+    "bytes": 5187305
   },
   "minWorkmate": "0.21.0",
   "minProtocol": 3,
   "notes": {
-    "vi": "### Changed\n\n- **The AgentX Hub now lives at `https://agenthub.astralx.com.vn`** (moved from `https://skills.astralx.com.vn` on 2026-09-26, which had replaced `https://skills.dev-server.cloud` on 2026-09-09). The default hub address (`services.skillHubBaseUrl` in `brand/brand.config.json`) points there, and so does the only origin allowed to message the extension (`externally_connectable`, Chrome/Edge), which the brand build derives from the same value. A hub address saved by hand in Settings → Skills still wins over the default, so a browser that was pointed at an old host keeps that override until it is cleared (*Dùng mặc định*). Builds up to 1.0.6 carry the previous address, which no longer resolves.",
-    "en": "### Changed\n\n- **The AgentX Hub now lives at `https://agenthub.astralx.com.vn`** (moved from `https://skills.astralx.com.vn` on 2026-09-26, which had replaced `https://skills.dev-server.cloud` on 2026-09-09). The default hub address (`services.skillHubBaseUrl` in `brand/brand.config.json`) points there, and so does the only origin allowed to message the extension (`externally_connectable`, Chrome/Edge), which the brand build derives from the same value. A hub address saved by hand in Settings → Skills still wins over the default, so a browser that was pointed at an old host keeps that override until it is cleared (*Dùng mặc định*). Builds up to 1.0.6 carry the previous address, which no longer resolves."
+    "vi": "### Changed\n- Khoá và model lấy từ AgentX SSO; bộ chọn chỉ hiển thị model chat được cấp, tách model tìm web, tạo ảnh, đọc ảnh và đọc to.\n- Cầu nối MCP 1.3.0 chia sẻ kết nối giữa Workmate và gateway, ưu tiên ứng dụng desktop và tự chuyển tiếp khi đổi chủ cổng.\n- WebMate mới nhất được đóng gói cùng AgentX Workmate 1.0.4.",
+    "en": "### Changed\n- Khoá và model lấy từ AgentX SSO; bộ chọn chỉ hiển thị model chat được cấp, tách model tìm web, tạo ảnh, đọc ảnh và đọc to.\n- Cầu nối MCP 1.3.0 chia sẻ kết nối giữa Workmate và gateway, ưu tiên ứng dụng desktop và tự chuyển tiếp khi đổi chủ cổng.\n- WebMate mới nhất được đóng gói cùng AgentX Workmate 1.0.4."
   },
-  "signature": "ed25519:XloSED1W/ukAq+cygTa6c44FJtgGkTd8lVAwSnS1AMwYCnsSiEVCnUh2Kw0a0geM32Pfps2eyQiNmTtu20doBQ=="
+  "signature": "ed25519:14aSZIeMo+Cmr0+4e+90xQVhveB4WNIw/OmPf5g7jvLgB1fogHG8vZwe6L+CTTorOmh+BMgLFRJjFsPwRUO6BQ=="
 }
