@@ -184,3 +184,38 @@ test("state, pairing and commands paths follow the WebMate directory and can be 
   assert.equal(off.config.commandsDir, null);
   assert.equal(norm(off.config.pairingFile), "/etc/pairing.json");
 });
+
+test("the desktop app's copy outranks every other host on the bridge port unless told otherwise", async () => {
+  const clean = { ...CLEAN, WEBMATE_BRIDGE_PRIORITY: undefined, WEBBRAIN_BRIDGE_PRIORITY: undefined };
+  const plain = await loadConfig({ ...clean, AGENTX_MCP_HOST: undefined });
+  assert.equal(plain.config.bridgeHost, null);
+  assert.equal(plain.config.bridgePriority, 0);
+
+  const gateway = await loadConfig({ ...clean, AGENTX_MCP_HOST: "gateway" });
+  assert.equal(gateway.config.bridgeHost, "gateway");
+  assert.equal(gateway.config.bridgePriority, 0);
+
+  const desktop = await loadConfig({ ...clean, AGENTX_MCP_HOST: "desktop" });
+  assert.equal(desktop.config.bridgeHost, "desktop");
+  assert.equal(desktop.config.bridgePriority, desktop.DESKTOP_BRIDGE_PRIORITY);
+  assert.ok(desktop.DESKTOP_BRIDGE_PRIORITY > 0);
+
+  // An explicit priority wins over the host default, negative included.
+  const pinned = await loadConfig({ ...clean, AGENTX_MCP_HOST: "desktop", WEBMATE_BRIDGE_PRIORITY: "-5" });
+  assert.equal(pinned.config.bridgePriority, -5);
+  await assert.rejects(() => loadConfig({ ...clean, WEBMATE_BRIDGE_PRIORITY: "high" }), /must be an integer/);
+});
+
+test("handoff and retry timings are durations with sane defaults", async () => {
+  const clean = {
+    ...CLEAN,
+    WEBMATE_BIND_RETRY_MS: undefined,
+    WEBMATE_HANDOFF_DRAIN_MS: undefined,
+    WEBMATE_HANDOFF_TIMEOUT_MS: undefined,
+  };
+  const { config } = await loadConfig(clean);
+  assert.equal(config.bindRetryMs, 5_000);
+  assert.equal(config.handoffDrainMs, 5_000);
+  assert.equal(config.handoffTimeoutMs, 5_000);
+  await assert.rejects(() => loadConfig({ ...clean, WEBMATE_BIND_RETRY_MS: "0" }), /positive duration/);
+});

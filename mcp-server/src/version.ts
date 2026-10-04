@@ -6,7 +6,7 @@
  * `workmate.json` `minServerVersion` is compared against on the extension
  * side.
  */
-export const SERVER_VERSION = "1.2.0";
+export const SERVER_VERSION = "1.3.0";
 
 /**
  * Bridge protocol this server speaks. The extension announces its own number
@@ -14,6 +14,8 @@ export const SERVER_VERSION = "1.2.0";
  * token, signedIn) and the `hello_ack` reply. Server 1.2.0 keeps v3 and adds
  * only optional pieces: `hello.instanceId`, the `session` frame, and the
  * `auth_hint` / `auth_open` actions — an extension without them still pairs.
+ * Server 1.3.0 leaves the extension protocol alone; what it adds is between
+ * copies of this server (the peer protocol, peer.ts PEER_PROTOCOL_VERSION).
  */
 export const BRIDGE_PROTOCOL_VERSION = 3;
 

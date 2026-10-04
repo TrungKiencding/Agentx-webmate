@@ -6,6 +6,11 @@
  * loses all six tools — so the agent cannot say why the browser tools vanished
  * while the extension, still attached to the old process, reports "Connected".
  *
+ * The holder here is not a bridge at all (a bare TCP listener), so there is
+ * nothing to relay through: the server waits as a standby, every tool says
+ * why, and it takes the port once it frees up. Sharing the port with another
+ * copy of this server is test/bridge-peers.test.mjs.
+ *
  * Run: node --test test/bridge-port-conflict.test.mjs   (after `npm run build`)
  */
 
@@ -44,30 +49,34 @@ async function occupy(port) {
 const BUSY_PORT = await freePort();
 process.env.WEBMATE_BRIDGE_PORT = String(BUSY_PORT);
 process.env.WEBMATE_CONNECT_GRACE_MS = "5000";
+process.env.WEBMATE_BIND_RETRY_MS = "200";
+// Never read the developer machine's real ~/.agentx/webmate/pairing.json.
+process.env.WEBMATE_DIR = mkdtempSync(path.join(tmpdir(), "webmate-port-conflict-"));
 
-const { WebMateBridge, PortInUseError, describePortConflict } = await import(
-  "../dist/bridge.js"
-);
+const { WebMateBridge, describePortConflict } = await import("../dist/bridge.js");
 
-test("binding a taken port rejects with a typed, identifiable error", async () => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("a taken port leaves the bridge waiting with the reason, and it takes the port once free", async () => {
   const squatter = await occupy(BUSY_PORT);
   const bridge = new WebMateBridge();
   try {
-    await assert.rejects(
-      () => bridge.start(),
-      (error) => {
-        assert.ok(error instanceof PortInUseError, `got ${error?.name}`);
-        assert.equal(error.port, BUSY_PORT);
-        return true;
-      },
-    );
-    // A failed bind must not be remembered as a live server, or a retry after
-    // the port frees up would be swallowed by start()'s idempotence guard.
-    await bridge.stop();
+    // Never throws: a copy that cannot bind waits as a standby.
+    await bridge.start();
+    assert.equal(bridge.role(), "standby");
+    assert.equal(bridge.route().kind, "none");
+    assert.match(bridge.unavailable(), new RegExp(`Port ${BUSY_PORT} is already in use`));
+    assert.equal(bridge.publishesState(), false, "a copy without the port never writes state.json");
   } finally {
     squatter.close();
     await once(squatter, "close");
   }
+  // The squatter is gone: the waiting bridge binds within its retry interval.
+  const deadline = Date.now() + 5_000;
+  while (bridge.role() !== "owner" && Date.now() < deadline) await sleep(20);
+  assert.equal(bridge.role(), "owner");
+  assert.equal(bridge.unavailable(), null);
+  await bridge.stop();
 });
 
 test("an unavailable bridge fails commands with the reason, without waiting", async () => {

@@ -6,13 +6,15 @@
  * "connected · Google Chrome" line during onboarding and in Settings, and to
  * decide whether an update can be applied live. It is written whole on every
  * change, through a temp file and rename, so a reader never sees a torn JSON
- * document. This process is the only writer; the losing side of a port
- * conflict writes nothing, because the winner's file is the truthful one.
+ * document. Only the copy of this server that holds the bridge port writes it
+ * (see peer.ts); a standby writes nothing, because the owner's file is the
+ * truthful one, and a copy that is handed the port takes over the file.
  *
  * Readers should treat `listening: true` with a dead `pid` as stale — a
  * force-quit server has no chance to write its goodbye.
  */
 
+import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -45,10 +47,23 @@ export interface ConnectionState {
   active: boolean;
 }
 
+/** A copy of this server relaying through the owner (see peer.ts). */
+export interface StandbyState {
+  pid: number | null;
+  host: string | null;
+  priority: number;
+}
+
 export interface BridgeStateFields {
   pid: number;
   port: number;
   serverVersion: string;
+  /** The AgentX process hosting the owner ("desktop", "gateway", …), when it said. */
+  host: string | null;
+  /** The owner's bridge priority; a copy that outranks it is handed the port. */
+  priority: number;
+  /** Copies relaying their commands through this owner. */
+  standbys: StandbyState[];
   listening: boolean;
   connected: boolean;
   pairingRequired: boolean;
@@ -71,7 +86,8 @@ export interface BridgeState extends BridgeStateFields {
   updatedAt: string;
 }
 
-export const EMPTY_STATE: Omit<BridgeStateFields, "pid" | "port" | "serverVersion"> = {
+export const EMPTY_STATE: Omit<BridgeStateFields, "pid" | "port" | "serverVersion" | "host" | "priority"> = {
+  standbys: [],
   listening: false,
   connected: false,
   pairingRequired: false,
@@ -105,11 +121,29 @@ export class StateFile {
 
   constructor(
     private readonly file: string | null,
-    seed: Pick<BridgeStateFields, "pid" | "port" | "serverVersion">,
+    seed: Pick<BridgeStateFields, "pid" | "port" | "serverVersion" | "host" | "priority">,
     private readonly log: (...args: unknown[]) => void = () => {},
     private readonly now: () => Date = () => new Date(),
   ) {
     this.state = { schema: 1, ...EMPTY_STATE, ...seed, updatedAt: this.now().toISOString() };
+  }
+
+  /**
+   * Keep the last command outcome already in the file when this process takes
+   * the file over from a previous owner, so Workmate still finds the outcome
+   * of a command that owner finished just before the port changed hands.
+   */
+  inheritLastCommand(): void {
+    if (!this.file || this.state.lastCommand) return;
+    try {
+      const raw = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, unknown>;
+      const last = raw?.lastCommand;
+      if (last && typeof last === "object" && typeof (last as LastCommand).id === "string") {
+        this.state = { ...this.state, lastCommand: last as LastCommand };
+      }
+    } catch {
+      /* no file yet, or unreadable: nothing to keep */
+    }
   }
 
   /** Current in-memory state (what the next write will contain). */

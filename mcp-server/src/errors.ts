@@ -34,3 +34,26 @@ export type WebmateErrorCode = (typeof WEBMATE_ERROR_CODES)[number];
 export function isWebmateErrorCode(value: unknown): value is WebmateErrorCode {
   return typeof value === "string" && (WEBMATE_ERROR_CODES as readonly string[]).includes(value);
 }
+
+/**
+ * A failed bridge command. `code` says whether the command reached the
+ * extension at all; `webmateCode` is the structured code Workmate reacts to.
+ */
+export class BridgeError extends Error {
+  readonly status?: number;
+  readonly code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
+  /** Structured code Workmate reacts to (see WEBMATE_ERROR_CODES). */
+  readonly webmateCode?: WebmateErrorCode;
+  constructor(
+    message: string,
+    status?: number,
+    code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED",
+    webmateCode?: WebmateErrorCode,
+  ) {
+    super(message);
+    this.name = "BridgeError";
+    this.status = status;
+    this.code = code;
+    this.webmateCode = webmateCode;
+  }
+}

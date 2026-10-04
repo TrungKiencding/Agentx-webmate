@@ -31,16 +31,15 @@ import {
   type BridgeAction,
   BridgeError,
   type ConnectionSummary,
-  PortInUseError,
   WebMateBridge,
   connectInstructions,
-  describePortConflict,
   pairedConnectInstructions,
   type CloudSnapshot,
 } from "./bridge.js";
 import { CommandWatcher, type CommandOutcome, type WorkmateCommand } from "./commands.js";
 import { bridgeUrl, config } from "./config.js";
 import type { WebmateErrorCode } from "./errors.js";
+import { log } from "./log.js";
 import { StateFile } from "./state.js";
 import { SERVER_VERSION } from "./version.js";
 import {
@@ -66,22 +65,40 @@ const T = {
   connection: tool("connection"),
 };
 
-const bridge = new WebMateBridge();
+const bridge = new WebMateBridge({
+  // Handing the port to a copy that outranks this one (the desktop app's):
+  // Workmate commands already picked up here finish and are recorded here
+  // first; the next owner consumes any that arrive after.
+  beforeHandoff: async () => {
+    commands.stop();
+    await commands.drain(config.handoffDrainMs);
+  },
+});
 
 // state.json for Workmate. Seeded with facts that never change for this
 // process; everything else is copied from the bridge on each change.
 const state = new StateFile(
   config.stateFile,
-  { pid: process.pid, port: config.bridgePort, serverVersion: SERVER_VERSION },
-  (...args) => console.error(`[${SERVER_NAME}-mcp]`, ...args),
+  {
+    pid: process.pid,
+    port: config.bridgePort,
+    serverVersion: SERVER_VERSION,
+    host: config.bridgeHost,
+    priority: config.bridgePriority,
+  },
+  log,
 );
+// Set once shutdown() has written the goodbye: nothing may overwrite it.
+let closing = false;
+
 bridge.onChange(() => {
-  const snapshot = bridge.snapshot();
-  // Only the process that holds the port publishes. The loser of a port
-  // conflict never reaches `listening`, and the goodbye at shutdown is
+  // Only the copy that holds the port publishes (a standby relays through it,
+  // and the owner's file is the truthful one). The goodbye at shutdown is
   // written explicitly by shutdown() itself.
-  if (!snapshot.listening) return;
+  if (closing || !bridge.publishesState()) return;
+  const snapshot = bridge.snapshot();
   state.update({
+    standbys: bridge.standbys().map(({ pid, host, priority }) => ({ pid, host, priority })),
     listening: snapshot.listening,
     connected: snapshot.connected,
     pairingRequired: snapshot.pairingRequired,
@@ -232,6 +249,10 @@ const commands = new CommandWatcher({
   dir: config.commandsDir,
   handle: handleWorkmateCommand,
   onResult: (command, outcome, timing) => {
+    log(`command ${command.action} (${command.id}): ${outcome.ok ? "ok" : `failed — ${outcome.error}`}`);
+    // A command still running when the port changed hands (it outlived the
+    // handoff drain) has lost its extension; the new owner's file wins.
+    if (closing || !bridge.publishesState()) return;
     state.update({
       lastCommand: {
         id: command.id,
@@ -244,11 +265,20 @@ const commands = new CommandWatcher({
         ...timing,
       },
     });
-    console.error(
-      `[${SERVER_NAME}-mcp] command ${command.action} (${command.id}): ${outcome.ok ? "ok" : `failed — ${outcome.error}`}`,
-    );
   },
-  log: (...args) => console.error(`[${SERVER_NAME}-mcp]`, ...args),
+  log,
+});
+
+// Only the owner reads Workmate's commands: they act on the extension attached
+// to it. Taking the port over also takes over state.json, keeping the previous
+// owner's last command outcome for Workmate to correlate.
+bridge.onRoleChange((role) => {
+  if (role === "owner") {
+    state.inheritLastCommand();
+    void commands.start();
+  } else {
+    commands.stop();
+  }
 });
 
 const server = new McpServer(
@@ -730,17 +760,30 @@ server.registerTool(
     inputSchema: {},
   },
   async (): Promise<TextResult> => {
-    // A bridge that never opened its listener has a specific, actionable
-    // answer. Report it before the generic "check your browser settings"
-    // text below, which would send the user to settings that are already fine.
-    const unavailable = bridge.unavailable();
-    if (unavailable) return fail(unavailable, "WEBMATE_PORT_IN_USE");
-
     // Same grace the command path uses, so this diagnostic never reports
-    // "not connected" for a browser that is one backoff tick from attaching.
+    // "not connected" for a browser that is one backoff tick from attaching,
+    // or for a copy of this server a moment from its route to the owner. It
+    // returns at once when no route can appear.
     if (!bridge.isConnected() && config.connectProbeMs > 0) {
       await bridge.waitForExtension(config.connectProbeMs);
     }
+
+    // No route at all — this copy neither holds the port nor can relay
+    // through whoever does — has a specific, actionable answer. Report it
+    // before the generic "check your browser settings" text below, which
+    // would send the user to settings that are already fine.
+    const unavailable = bridge.unavailable();
+    if (unavailable) return fail(unavailable, "WEBMATE_PORT_IN_USE");
+
+    const route = bridge.route();
+    const owner = route.kind === "relay" ? route.owner : null;
+    const where = owner
+      ? `Relaying through the bridge on ${bridgeUrl()}, which ${describeOwner(owner)} holds`
+      : `Listening on ${bridgeUrl()}`;
+    const routeFields = owner
+      ? { route: "relay", owner: { pid: owner.pid, host: owner.host, serverVersion: owner.serverVersion } }
+      : { route: route.kind === "direct" ? "direct" : "none" };
+
     if (bridge.isConnected()) {
       const info = bridge.info();
       const attached = bridge.connections();
@@ -762,10 +805,7 @@ server.registerTool(
           `bridge protocol v${entry.protocolVersion ?? "?"}`,
           entry.signedIn === true ? "signed in" : entry.signedIn === false ? "NOT signed in" : "sign-in state unknown",
         ].join(" · ");
-      const lines = [
-        `Connected. Listening on ${bridgeUrl()}.`,
-        `Extension: ${describe(info)}`,
-      ];
+      const lines = [`Connected. ${where}.`, `Extension: ${describe(info)}`];
       if (info.capabilities.length) lines.push(`Extension capabilities: ${info.capabilities.join(", ")}`);
       if (attached.length > 1) {
         lines.push(
@@ -807,15 +847,16 @@ server.registerTool(
         })),
         serverVersion: SERVER_VERSION,
         url: bridgeUrl(),
+        ...routeFields,
       });
     }
     const notConnected = await bridge.describeNotConnected();
     const code = notConnected.webmateCode ?? "WEBMATE_NOT_CONNECTED";
     const text =
       code === "WEBMATE_NOT_INSTALLED"
-        ? `${code}: ${notConnected.message}\nListening on ${bridgeUrl()}; nothing can dial in until the ` +
+        ? `${code}: ${notConnected.message}\n${where}; nothing can dial in until the ` +
           "extension is installed into a browser."
-        : `${code}: Not connected. Listening on ${bridgeUrl()}, but no extension has dialled in.\n\n` +
+        : `${code}: Not connected. ${where}, but no extension has dialled in.\n\n` +
           (bridge.isPaired()
             ? `To connect: ${pairedConnectInstructions()}\n`
             : `To connect: open a Chromium browser (Chrome, Edge, Brave) with the ${BRAND.extensionName} ` +
@@ -824,40 +865,40 @@ server.registerTool(
           "time as the Cloud bridge on port 17373 or the LM Studio plugin on 17375.\n\n" +
           "Firefox cannot host the bridge — that build has no offscreen document. If the " +
           "user is on Firefox, say so rather than suggesting settings changes.";
-    return ok(text, { connected: false, code, serverVersion: SERVER_VERSION, url: bridgeUrl() });
+    return ok(text, { connected: false, code, serverVersion: SERVER_VERSION, url: bridgeUrl(), ...routeFields });
   },
 );
 
-// Whether this process owns the port — and with it the right to write
-// state.json and consume command files. The loser of a port conflict does
-// neither: the winner's files are the truthful ones.
-let ownsBridge = false;
+/** "PID 123 (desktop)" — the owner a standby relays through, for the connection tool. */
+function describeOwner(owner: { pid: number | null; host: string | null }): string {
+  return `PID ${owner.pid ?? "?"}${owner.host ? ` (${owner.host})` : ""}`;
+}
 
 async function main(): Promise<void> {
-  try {
-    await bridge.start();
-    ownsBridge = true;
-    await commands.start();
+  // Never fatal when the port is taken: this copy then relays through the
+  // copy that holds it, or waits for the port with every tool saying why.
+  // Exiting would take all six tools with it and leave the agent no way to
+  // explain anything — which is how a leftover server used to turn into a
+  // silent loss of browser tools.
+  await bridge.start();
 
-    // Give an already-open extension a bounded chance to reconnect before the
-    // stdio server advertises browser tools. If this promise is discarded, the
-    // grace period is illusory and the first tool call can race the reconnect.
-    await bridge.waitForExtension(3_000);
-  } catch (error) {
-    // A taken port must NOT be fatal. Exiting here kills all six tools, so the
-    // MCP host only sees "server failed" and the agent has no way to explain
-    // anything — which is precisely how a leftover server from a previous
-    // session turns into a silent loss of browser tools. Serve stdio anyway
-    // and let every tool answer with the reason.
-    if (!(error instanceof PortInUseError)) throw error;
-    const reason = await describePortConflict(error.port);
-    bridge.markUnavailable(reason);
-    console.error(`[${SERVER_NAME}-mcp] ${reason.split("\n")[0]}`);
-  }
+  // Give an already-open extension a bounded chance to reconnect before the
+  // stdio server advertises browser tools. If this promise is discarded, the
+  // grace period is illusory and the first tool call can race the reconnect.
+  await bridge.waitForExtension(3_000);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[${SERVER_NAME}-mcp] ready on stdio`);
+  const route = bridge.route();
+  log(
+    `ready on stdio — ${
+      route.kind === "direct"
+        ? "bridge owner"
+        : route.kind === "relay"
+          ? `relaying through ${describeOwner(route.owner)}`
+          : "waiting for the bridge port"
+    }`,
+  );
 }
 
 let shuttingDown = false;
@@ -865,13 +906,18 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   commands.stop();
-  await bridge.stop().catch((error) => {
-    console.error(`[${SERVER_NAME}-mcp] shutdown error:`, error);
-  });
-  if (ownsBridge) {
-    state.update({ listening: false, connected: false });
+  // The goodbye goes out while this copy still holds the port: a standby binds
+  // the moment it frees up and writes its own state, which nothing may
+  // overwrite afterwards.
+  if (bridge.publishesState()) {
+    state.update({ listening: false, connected: false, standbys: [] });
+    closing = true;
     await state.flush();
   }
+  closing = true;
+  await bridge.stop().catch((error) => {
+    log("shutdown error:", error);
+  });
   process.exit(0);
 }
 
@@ -884,6 +930,6 @@ process.stdin.once("end", () => void shutdown());
 process.stdin.once("close", () => void shutdown());
 
 main().catch((error) => {
-  console.error(`[${SERVER_NAME}-mcp] fatal:`, error);
+  log("fatal:", error);
   process.exit(1);
 });

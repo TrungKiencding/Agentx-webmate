@@ -118,7 +118,27 @@ extension, `BridgeAction` in the server):
 
 Written only by the process that holds the port. A reader that sees
 `listening: true` with a dead `pid` is looking at a force-quit server's last
-words.
+words. Since server 1.3.0 the file also carries `host` (the AgentX process
+running the holder, from `AGENTX_MCP_HOST`: `desktop`, `gateway`, …),
+`priority`, and `standbys: [{pid, host, priority}]` — the other copies of the
+server relaying through the holder.
+
+## Several copies of the server (1.3.0)
+
+AgentX runs one copy of the MCP server per process that loads MCP tools: the
+desktop backend, the messaging gateway (detached, so it outlives the app), slash
+workers. The copy that holds the port is the owner; every other copy connects
+to it on `ws://127.0.0.1:17374/peer` with a `peer_hello` carrying the pairing
+token, and relays `cloud_run` / `cloud_status` / `cloud_respond` /
+`cloud_abort` through it (`mcp-server/src/peer.ts` has the frames). The
+desktop's copy (`AGENTX_MCP_HOST=desktop`, priority 100) outranks the rest:
+when it joins an owner of lower priority, that owner finishes the Workmate
+commands it already picked up, stops listening, waits for the desktop's copy to
+bind, drains in-flight commands and releases the extension with close code
+1012 — the extension redials at once and lands on the desktop's copy, which
+from then on writes `state.json` and consumes `commands/`. When the owner exits,
+a standby takes the port. Without `pairing.json` nothing relays and a standby
+retries the port every `WEBMATE_BIND_RETRY_MS`.
 
 ## Commands
 
