@@ -1,383 +1,216 @@
 <p align="center">
-  <img src="assets/logo-mark.png" alt="WebBrain logo" width="92">
+  <img src="brand/icons/icon128.png" alt="AgentX WebMate" width="92">
 </p>
 
-<h1 align="center">WebBrain</h1>
+<h1 align="center">AgentX WebMate</h1>
 
 <p align="center">
-  Open-source AI browser agent for chatting with pages, automating tasks, and running multi-step workflows with your choice of LLM.
-</p>
-
-<p align="center">
-  <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb"><img src="https://img.shields.io/badge/Chrome-Install-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Install WebBrain from the Chrome Web Store"></a>
-  <a href="https://addons.mozilla.org/firefox/addon/webbrain/"><img src="https://img.shields.io/badge/Firefox-Install-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Install WebBrain from Firefox Browser Add-ons"></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo"><img src="https://img.shields.io/badge/Edge-Install-0A84FF?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Install WebBrain from Microsoft Edge Add-ons"></a>
+  Trợ lý AI ngay trong trình duyệt — đọc trang web, trả lời câu hỏi và thực hiện tác vụ trong phiên làm việc của bạn.
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> ·
-  <a href="README.zh-CN.md">中文</a> ·
-  <a href="README.fr.md">Français</a> ·
-  <a href="docs/">Docs</a> ·
-  <a href="https://webbrain.one">Website</a> ·
-  <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
-  <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
-  <a href="LICENSE">GPL-3.0-or-later</a>
+  <a href="https://github.com/TrungKiencding/agentx-webmate">Repository</a> ·
+  <a href="https://github.com/TrungKiencding/agentx-webmate/issues">Báo lỗi</a> ·
+  <a href="docs/">Tài liệu</a> ·
+  <a href="LICENSE">Giấy phép</a>
 </p>
 
-![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
+AgentX WebMate là tiện ích trình duyệt đưa AI vào một bảng bên cạnh các tab đang mở. Bạn có thể hỏi về nội dung trang, yêu cầu tóm tắt tài liệu, trích xuất dữ liệu hoặc giao cho trợ lý một chuỗi thao tác như tìm kiếm, điền biểu mẫu và điều hướng.
 
-WebBrain is a web browser extension that puts an AI agent in a side panel next to
-your tabs. Ask it about the page you're on, or hand it a task and let it click,
-type, and navigate its way through. It runs on the model you choose — a local
-llama.cpp or Ollama server, a frontier cloud API, or the managed default that
-needs no setup at all.
+Tiện ích làm việc trong trình duyệt bạn đang sử dụng, với phiên đăng nhập hiện có. Khi kết nối qua MCP, AgentX Workmate hoặc một ứng dụng hỗ trợ MCP có thể giao tác vụ cho WebMate và nhận kết quả.
 
-## Install
+## Tính năng
 
-Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb),
-[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/webbrain/), or
-[Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo).
+- **Hỏi đáp theo nội dung trang:** đọc văn bản, liên kết, bảng, biểu mẫu và các phần tử tương tác.
+- **Thao tác trên trình duyệt:** nhấp, nhập liệu, cuộn, điều hướng, tải lên và tải xuống theo quyền được cấp.
+- **Đọc tài liệu đính kèm:** hỗ trợ ảnh, PDF, DOCX và các tệp văn bản như TXT, JSON, CSV.
+- **Lập kế hoạch:** xem và duyệt kế hoạch trước khi thực hiện tác vụ nhiều bước.
+- **Workflow tái sử dụng:** lưu quy trình đã thực hiện để chạy lại, xuất hoặc chia sẻ.
+- **Lịch và theo dõi:** hẹn tác vụ hoặc theo dõi trang theo một điều kiện.
+- **Skills:** bổ sung hướng dẫn và công cụ cho các tác vụ chuyên biệt.
+- **Lựa chọn mô hình:** kết nối các nhà cung cấp AI hoặc máy chủ mô hình cục bộ tương thích OpenAI.
+- **Tích hợp AgentX:** đăng nhập AgentX, kết nối Skill Hub và phối hợp với AgentX Workmate.
 
-<details>
-<summary><b>Or load it from source</b></summary>
+## Cài đặt từ mã nguồn
 
-```bash
-git clone https://github.com/webbrain-one/webbrain.git
-```
-
-**Chrome** — open `chrome://extensions/`, enable **Developer mode** (top
-right), click **Load unpacked**, and select the `webbrain/src/chrome` folder.
-
-**Firefox** — open `about:debugging#/runtime/this-firefox`, click **Load
-Temporary Add-on**, and select `src/firefox/manifest.json`. Temporary add-ons
-are removed when Firefox restarts; permanent installation requires signing via
-[addons.mozilla.org](https://addons.mozilla.org).
-
-</details>
-
-## Use it
-
-Click the WebBrain icon to open the side panel, then type something like:
-
-- "Summarize this page"
-- "Find all links about pricing"
-- "Fill in the search box with 'AI agents' and click Search"
-- "Navigate to github.com and find trending repositories"
-
-Attach files with the paperclip, paste them, or drop them on the composer —
-images, PDFs, DOCX, JSON/TXT/CSV, or anything else as a readable reference.
-Every file is delivered the best way your selected model supports (native
-document blocks, locally extracted text, or rendered pages for scans), chips
-survive panel reloads, and the agent can read more of a long file on demand
-with `read_attachment`.
-
-Three modes control what the agent is allowed to do:
-
-| Mode    | What it can do                                                         |
-| ------- | ---------------------------------------------------------------------- |
-| **Ask** | Read-only. Reads the page, answers questions, fetches URLs.            |
-| **Act** | Clicks, types, navigates, uploads, downloads, fills forms.             |
-| **Dev** | Adds page source, styles, console, network, and reversible page edits. |
-
-## Pick a model
-
-**WebBrain Cloud 1.0** is the default and needs no API key or local setup.
-
-**Local models** need no API key either. Point WebBrain at any OpenAI-compatible
-server:
+Cần Git, Node.js và npm. Sử dụng **Node.js 20 trở lên** nếu bạn chạy MCP server.
 
 ```bash
-llama-server -m your-model.gguf --port 8080          # llama.cpp
-ollama serve                                          # Ollama  → :11434/v1
-vllm serve your-model --port 8000                     # vLLM    → :8000/v1
-python -m sglang.launch_server --model-path your-model --port 30000
+git clone https://github.com/TrungKiencding/agentx-webmate.git
+cd agentx-webmate
+npm ci
+npm run brand:build
 ```
 
-LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
-(`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
-also supports authenticated loopback gateways such as CLIProxyAPI; see the
-[secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
-Load a model with **at least a 16k-token context window** — 8k works only
-with the Compact tier, and 4k is too small for the system prompt plus tool
-schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
-Studio, and auto-compacts the conversation as it fills up. For Ollama,
-llama.cpp, LM Studio, and LocalAI, it also reads native server metadata before
-adding screenshots; Settings provides Auto, Force on, and Off overrides. When
-the optional Model field is blank, the loaded-model capability is rechecked on
-every user turn so a server-side hot swap takes effect. There is also a
-preview `ollama launch webbrain --model <model>` handoff. Details:
-[providers and models](docs/providers-and-models.md#local-providers).
+Lệnh build tạo hai thư mục `brand-dist/chrome` và `brand-dist/firefox`.
 
-**Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
-Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
-Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **105 built-in provider cards** on both Chromium and Firefox —
-see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
+### Chrome, Edge và các trình duyệt Chromium
 
-## Features
+1. Mở `chrome://extensions/` hoặc `edge://extensions/`.
+2. Bật **Developer mode / Chế độ dành cho nhà phát triển**.
+3. Chọn **Load unpacked / Tải tiện ích đã giải nén**.
+4. Chọn thư mục **`brand-dist/chrome`** trong dự án.
+5. Ghim biểu tượng AgentX WebMate và mở bảng bên để bắt đầu.
 
-- **Reads any page** — text, links, forms, tables, PDFs, and interactive
-  elements, via the accessibility tree rather than brittle selectors
-- **Acts on it** — click, type, scroll, navigate, upload, download, and verify
-  forms, with per-site permission prompts before consequential actions
-- **Permission modes** — one small control under the composer decides how much
-  runs without asking: ask every time (default), auto-approve reversible on-page
-  actions, also accept form submits and page scripts, or bypass everything.
-  Downloads, uploads, outbound requests and scheduled work keep asking in every
-  mode but the last
-- **Plan before Act** — Act and Dev can generate a structured plan, show it for
-  approval, and pin the approved plan to the scratchpad before any tool runs
-- **Multi-step agent** — autonomous tool-use loop, configurable up to 195 steps
-  (default 130), with a Continue button when it hits the limit
-- **Saved workflows** — turn a successful run into a reusable, value-free
-  workflow you can re-run, export, and share
-- **Scheduled tasks and watches** — `/schedule` for later, `/watch` to poll a
-  page and act when a condition is met
-- **Skills** — trusted instructions and tools that load only when relevant
-- **Smart context** — token-aware auto-compaction, tool-result limits, and
-  emergency overflow recovery
-- **Per-tab conversations** — each tab keeps its own history; optional local
-  user memory for stated preferences
-- **Reading-first side panel** — streaming Ask replies, floating controls that
-  keep your question in view as answers grow, copy buttons, a page-inspection
-  banner, and a stop button that works mid-run
-- **Deterministic by default** — temperature `0.15` for browser-control
-  decisions, `0.3` for Ask, `0` for vision screenshot descriptions
+### Firefox
 
-## Agent tools
+1. Mở `about:debugging#/runtime/this-firefox`.
+2. Chọn **Load Temporary Add-on**.
+3. Chọn `brand-dist/firefox/manifest.json`.
 
-WebBrain separates **tier** from **mode**. Tier (`compact`, `mid`, `full`) is a
-per-provider setting controlling how many tools a model sees — Compact suits
-small local models, Full unlocks hover, drag-drop, frames, and shadow DOM. Mode
-(`ask`, `act`, `dev`) controls what the user is allowing.
+Bản cài tạm thời sẽ bị gỡ khi Firefox khởi động lại. Cài đặt lâu dài cần một gói tiện ích đã được ký.
 
-The full tool-by-tier matrix, WebMCP notes, and Dev-mode diagnostics are in
-[agent tools](docs/agent-tools.md).
+## Bắt đầu sử dụng
 
-## Slash commands
+Mở AgentX WebMate, hoàn tất đăng nhập AgentX khi được yêu cầu và chọn nhà cung cấp, mô hình trong **Settings / Cài đặt**. Với nhà cung cấp yêu cầu khóa API, nhập khóa của bạn trong phần cấu hình tương ứng.
 
-Type `/help` in the panel for full signatures and flags. The most useful ones:
+Mở trang bạn muốn làm việc và thử:
 
-| Command                                                                                | What it does                                                                |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `/ask` · `/act` · `/dev` · `/plan`                                                     | Switch mode before sending                                                  |
-| `/schedule [prompt]`                                                                   | Create a scheduled task                                                     |
-| `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met                       |
-| `/workflow` · `/workflow --save <name>`                                                | Manage saved workflows or compile the last successful run                   |
-| `/teach --start <name>` · `/teach --end`                                               | Learn a reusable workflow from your demonstrated actions                    |
-| `/memory --add <text>`                                                                 | Save a user preference                                                      |
-| `/screenshot [--full-page]`                                                            | Capture the tab, or the full scrollable page                                |
-| `/record [--transcribe]`                                                               | Record the current tab, optionally saving a transcript                      |
-| `/export [--traces \| --config]`                                                       | Download the conversation, tool chain, or a Settings snapshot               |
-| `/compact` · `/reset` · `/verbose`                                                     | Compact context, clear the conversation, toggle tool detail                 |
-| `/allow-api`                                                                           | Per-conversation override letting `fetch_url` mutate when the UI is failing |
+- “Tóm tắt nội dung trang này bằng tiếng Việt.”
+- “Trích xuất bảng giá thành danh sách để tôi so sánh.”
+- “Tìm các liên kết liên quan đến tài liệu API.”
+- “Nhập từ khóa AI agents vào ô tìm kiếm và tìm kiếm.”
 
-`/watch` runs its first check immediately, then polls every 60 seconds
-(`--secs` accepts 30–120). Relative conditions like "when a new commit appears"
-establish a baseline on the first check; `--keep` keeps the watch running and
-suppresses repeated alerts for the same stable event key.
+Chọn chế độ phù hợp trước khi gửi yêu cầu:
 
-Full reference, including `/dangerously-skip-permissions` and the run-capture
-suffixes: [slash commands](docs/slash-commands.md).
+| Chế độ | Khả năng |
+| --- | --- |
+| **Ask** | Đọc trang, trả lời câu hỏi và lấy nội dung URL. |
+| **Act** | Thực hiện thao tác như nhấp, nhập liệu, điều hướng và điền biểu mẫu. |
+| **Dev** | Bổ sung công cụ kiểm tra mã trang, CSS, console, network và chỉnh sửa trang có thể hoàn tác. |
 
-## Keyboard Shortcuts
+Các thao tác thực tế chịu sự kiểm soát của chế độ quyền đã chọn. Xem yêu cầu cấp quyền và kiểm tra nội dung trước khi duyệt hành động.
 
-Chrome side panel shortcuts work when the WebBrain side panel has focus.
+## Kết nối mô hình
 
-| Shortcut                        | What it does                                                                 |
-| ------------------------------- | ---------------------------------------------------------------------------- |
-| `Ctrl+/` or `Cmd+/`             | Focus the input                                                              |
-| `Ctrl+Shift+A` or `Cmd+Shift+A` | Switch to Ask mode                                                           |
-| `Ctrl+Shift+X` or `Cmd+Shift+X` | Switch to Act mode                                                           |
-| `Ctrl+Shift+D` or `Cmd+Shift+D` | Switch to Dev mode                                                           |
-| `Escape`                        | Stop the active run, unless it is only dismissing slash-command autocomplete |
-| `Escape` twice                  | Stop an active recording from WebBrain or browser pages                      |
+WebMate hỗ trợ các nhà cung cấp như OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, OpenRouter và các dịch vụ tương thích khác. Danh sách và hướng dẫn cấu hình nằm trong [Providers and models](docs/providers-and-models.md).
 
-## Documentation
-
-|                                                                                                                          |                                                          |
-| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
-| [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
-| [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
-| [Providers and models](docs/providers-and-models.md)                                                                     | All 105 provider cards, local setup, tiers               |
-| [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
-| [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
-| [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
-| [Privacy and data flow](docs/privacy-and-data-flow.md)                                                                   | What leaves the browser, and what doesn't                |
-| [Accessibility tree and refs](docs/accessibility-tree-and-refs.md)                                                       | How pages are read and targeted                          |
-| [Site adapters](docs/site-adapters.md)                                                                                   | Per-site guidance                                        |
-| [Export and workflow formats](docs/export-and-workflow-formats.md)                                                       | `webbrain-config/1`, `webbrain-workflow/1`               |
-| [Adding a tool](docs/adding-a-tool.md) · [Localization](docs/localization.md) · [Test scenarios](docs/test-scenarios.md) | Contributor guides                                       |
-| [Community](docs/community.md)                                                                                           | Discord server guide: channels, roles, rules, escalation |
-
-Also available in [中文](docs/zh-CN/) and [Français](docs/fr/).
-
-## Community
-
-Chat about everything WebBrain — help, local and cloud model setups, site
-adapters, show-and-tell, and contributor coordination — on the
-[WebBrain Discord](https://discord.gg/cgC325ssfw). See
-[community](docs/community.md) for how the server is organized, and
-[discord-setup](docs/discord-setup.md) for the channel, role, and welcome-screen
-configuration. Bug reports and feature requests belong in
-[GitHub issues](https://github.com/webbrain-one/webbrain/issues), not Discord.
-
-## Repository layout
-
-```
-src/chrome/     Manifest V3 build — service worker, chrome.scripting, sidePanel
-src/firefox/    Manifest V2 build — background page, executeScript, sidebar_action
-docs/           Design and reference docs (en, zh-CN, fr)
-mcp-server/     MCP server (agentx-webmate-mcp) — delegate browser tasks from AgentX Workmate, Claude Code, Codex, Cursor
-lmstudio-plugin/  Web tools + browser delegation as a standalone LM Studio plugin
-web/            Landing site and docs site
-test/           Node test suite, LLM scenario benchmarks, security corpora
-```
-
-Nearly all agent code is shared between the two builds. See
-[architecture](docs/architecture.md#chrome-vs-firefox-key-differences) for where
-they diverge.
-
-## Known issues
-
-**Firefox is meaningfully weaker than Chrome.** Firefox has no equivalent to the
-Chrome DevTools Protocol via `chrome.debugger`, so the Firefox build has no
-shadow-DOM piercing, no real trusted mouse events (some React/Vue handlers won't
-fire), no closed-shadow-root traversal, no `resolveSelector` retry budget, no
-SPA-navigation-aware retry, and no CDP screenshots. It uses `tabs.captureTab`
-for viewport screenshots, including inactive run tabs, but still cannot provide
-Chrome's pixel-perfect or full-page CDP capture. Site adapters, vision
-detection, loop detection, the auto-screenshot loop, and the Compact prompt/tool
-set _are_ mirrored to Firefox. Some single-page apps may also fail to trigger
-content-script re-injection after client-side navigation.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). To add a tool, follow the checklist in
-[adding a tool](docs/adding-a-tool.md). To add a provider, subclass
-`BaseLLMProvider`, implement `chat()` (and optionally `chatStream()`), and
-register it in `providers/manager.js` — mirroring both changes to
-`src/chrome/` and `src/firefox/`. All providers normalize to
-`{ content, toolCalls, usage }`; details in
-[providers and models](docs/providers-and-models.md#adding-a-provider).
-
-Recent changes are in [CHANGELOG.md](CHANGELOG.md).
-
-## MCP server
-
-Let a coding agent use *your* browser. Claude Code, Codex, Cursor and OpenClaw
-can delegate a task to WebBrain running in the session you are already signed
-into — cookies present, SSO already passed. A headless framework starts logged
-out and stalls at the first login wall; this does not.
+Bạn cũng có thể sử dụng Ollama, llama.cpp, LM Studio hoặc một máy chủ tương thích OpenAI trên máy:
 
 ```bash
-# AgentX Workmate — installs from the bundled MCP catalog
-agentx mcp install official/webmate
+# Ollama
+ollama serve
 
-# Claude Code — point at a built checkout
-cd mcp-server && npm ci && npm run build
+# llama.cpp
+llama-server -m your-model.gguf --port 8080
+```
+
+Trong Settings, chọn nhà cung cấp cục bộ phù hợp và cấu hình địa chỉ máy chủ, ví dụ `http://localhost:11434/v1` cho Ollama hoặc `http://localhost:8080/v1` cho llama.cpp. Tải mô hình trước khi gửi yêu cầu.
+
+Nên dùng mô hình có cửa sổ ngữ cảnh ít nhất **16k token** cho tác vụ trình duyệt. Chọn tier **Compact** khi sử dụng mô hình nhỏ; khả năng nhận ảnh phụ thuộc vào mô hình và cấu hình máy chủ.
+
+## Tích hợp AgentX Workmate và MCP
+
+MCP cho phép ứng dụng AI giao tác vụ cho WebMate trong trình duyệt đang đăng nhập của bạn. Tính năng cầu nối trình duyệt hiện hỗ trợ **Chromium**.
+
+### AgentX Workmate
+
+```bash
+agentx mcp install webmate
+```
+
+Sau khi cài, bắt đầu phiên mới hoặc chạy `/reload-mcp` trong Workmate. Xem [hướng dẫn tích hợp Workmate](docs/workmate-integration.md) để biết cách cài tiện ích, ghép nối và cập nhật.
+
+### Chạy MCP server từ mã nguồn
+
+Từ thư mục gốc dự án:
+
+```bash
+cd mcp-server
+npm ci
+npm run build
+```
+
+Ví dụ đăng ký với Claude Code, ngay trong thư mục `mcp-server`:
+
+```bash
 claude mcp add --transport stdio webmate -- node "$PWD/dist/index.js"
 ```
 
-The MCP client launches the server automatically when it starts an MCP session.
-To launch it yourself instead, run the following command and leave that terminal
-open (press `Ctrl+C` to stop it):
+Với ứng dụng MCP khác, cấu hình lệnh `node` và đường dẫn tuyệt đối đến `mcp-server/dist/index.js`. Ứng dụng MCP sẽ khởi chạy server khi kết nối.
+
+Cầu nối mặc định của tiện ích là `ws://127.0.0.1:17374/extension`. Kiểm tra trạng thái trong **Settings → General → Advanced → Cloud bridge**. Nếu báo lỗi kết nối, kiểm tra MCP server có đang chạy và địa chỉ cầu nối có đúng không.
+
+Các công cụ MCP gồm:
+
+| Công cụ | Chức năng |
+| --- | --- |
+| `webmate_run` | Giao một tác vụ trình duyệt. |
+| `webmate_extract` | Trích xuất dữ liệu theo JSON Schema. |
+| `webmate_status` | Kiểm tra trạng thái tác vụ. |
+| `webmate_respond` | Trả lời yêu cầu làm rõ hoặc tương tác đang chờ. |
+| `webmate_abort` | Dừng tác vụ. |
+| `webmate_connection` | Kiểm tra kết nối với tiện ích. |
+
+Xem [tài liệu MCP server](mcp-server/README.md) để biết tham số, vòng đời tác vụ, cấu hình ghép nối và cách xử lý lỗi.
+
+## Lệnh trong bảng chat
+
+Gõ `/help` để xem cú pháp đầy đủ.
+
+| Lệnh | Công dụng |
+| --- | --- |
+| `/ask`, `/act`, `/dev` | Chuyển chế độ làm việc. |
+| `/plan` | Yêu cầu lập kế hoạch. |
+| `/schedule` | Tạo tác vụ hẹn giờ. |
+| `/watch` | Theo dõi trang theo điều kiện. |
+| `/workflow` | Quản lý hoặc lưu workflow. |
+| `/teach` | Ghi nhận quy trình qua thao tác mẫu. |
+| `/memory` | Lưu tùy chọn người dùng. |
+| `/screenshot` | Chụp ảnh tab. |
+| `/record` | Ghi lại tab. |
+| `/export` | Xuất hội thoại, trace hoặc cấu hình. |
+| `/compact`, `/reset` | Thu gọn ngữ cảnh hoặc đặt lại hội thoại. |
+
+## Phát triển
 
 ```bash
-node mcp-server/dist/index.js
+npm run brand:build    # Build tiện ích AgentX WebMate
+npm run brand:watch    # Theo dõi thay đổi và build lại
+npm run build:zip      # Đóng gói tiện ích vào dist/
+npm test              # Chạy bộ kiểm thử của dự án
 ```
 
-Nothing to configure on the browser side: the bridge ships enabled and pointed
-at `ws://127.0.0.1:17374/extension`, so the extension attaches within seconds of
-the server coming up. **WebBrain → Settings → General → Advanced → Cloud bridge**
-shows the live status, and is where to switch ports or turn the bridge off.
-**Chromium only** — the control and bridge runtime use the extension's off-screen
-document, which the Firefox build does not have.
+Sau khi build lại, tải lại tiện ích trên trang quản lý extension. Các tệp trong `brand-dist/` là đầu ra sinh tự động; chỉnh sửa cấu hình và phần tùy biến trong `brand/` thay vì sửa trực tiếp đầu ra.
 
-If Settings reports **Connection error: WebSocket error**, nothing is normally
-listening at the configured URL. Start the MCP server, confirm that the URL uses
-port `17374`, and leave its process running. See the
-[`mcp-server` troubleshooting guide](mcp-server/README.md#troubleshooting) for a
-listener check and the other bridge ports.
+| Thư mục | Nội dung |
+| --- | --- |
+| `brand/` | Cấu hình AgentX, biểu tượng, giao diện và phần tùy biến. |
+| `src/chrome/` | Mã nền cho tiện ích Chromium, Manifest V3. |
+| `src/firefox/` | Mã nền cho tiện ích Firefox, Manifest V2. |
+| `brand-dist/` | Tiện ích đã build để nạp vào trình duyệt. |
+| `mcp-server/` | MCP server giao tác vụ cho trình duyệt. |
+| `lmstudio-plugin/` | Mã plugin tích hợp LM Studio. |
+| `docs/` | Tài liệu kiến trúc, tính năng và tích hợp. |
+| `scripts/` | Công cụ build, đóng gói và phát hành. |
+| `test/` | Bộ kiểm thử và kịch bản đánh giá. |
+| `web/` | Mã website và trang tài liệu. |
 
-```
-webmate_run(task: "open the Stripe dashboard and list last week's failed
-            payments with amounts and customer emails", mode: "ask")
-```
+## Tài liệu tham khảo
 
-Use `webmate_extract` with a JSON Schema when the caller needs predictable
-structured output instead of a prose summary. The server exposes six task-level
-tools: run, structured extraction, status, clarification response, abort, and
-connection diagnostics.
+- [Kiến trúc](docs/architecture.md)
+- [Công cụ và chế độ agent](docs/agent-tools.md)
+- [Nhà cung cấp và mô hình](docs/providers-and-models.md)
+- [Lệnh trong chat](docs/slash-commands.md)
+- [Skills](docs/skills.md)
+- [Mô hình bảo mật](docs/security-model.md)
+- [Quyền riêng tư và luồng dữ liệu](docs/privacy-and-data-flow.md)
+- [Tích hợp AgentX Workmate](docs/workmate-integration.md)
+- [MCP server](mcp-server/README.md)
 
-`mode='ask'` is read-only. `mode='act'` can click and type, gated by the same
-in-browser approval prompts a human gets. The server exposes task delegation
-rather than the ~50 low-level browser primitives: WebBrain's permission gate
-lives in the agent loop, so per-primitive access over a socket would sit below
-the gate and bypass it. Details in [`mcp-server/`](mcp-server/).
+## Giới hạn hiện tại
 
-The complete client setup, tool arguments, run lifecycle, structured-output
-examples, safety boundaries, and troubleshooting guide live at
-[`web/docs/mcp/`](web/docs/mcp/).
+- Firefox không có các khả năng Chrome DevTools Protocol của bản Chromium, nên một số thao tác, xử lý Shadow DOM và chụp ảnh trang có thể khác nhau.
+- Cầu nối MCP trình duyệt hiện chỉ hỗ trợ Chromium.
+- Kết quả phụ thuộc vào mô hình, nội dung trang và quyền được cấp. Các trang động hoặc có cơ chế chống tự động hóa có thể cần thao tác bổ sung từ người dùng.
+- Nội dung trang và tài liệu được gửi đến nhà cung cấp mô hình đã chọn khi cần xử lý; xem [quyền riêng tư và luồng dữ liệu](docs/privacy-and-data-flow.md) trước khi làm việc với dữ liệu nhạy cảm.
 
-> The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
-> the MCP server (17374, the shipped default), or the LM Studio plugin (17375).
-> Switch by changing the URL under **Settings → General → Advanced → Cloud
-> bridge**. Because it is on by default, any local process that listens on the
-> configured port can ask this browser to run tasks; the in-browser permission
-> prompts still gate every action it takes.
+## Đóng góp và hỗ trợ
 
-## LM Studio plugin
+Gửi lỗi và đề xuất tại [GitHub Issues](https://github.com/TrungKiencding/agentx-webmate/issues). Khi báo lỗi, ghi rõ trình duyệt, phiên bản tiện ích, nhà cung cấp mô hình và các bước tái hiện; loại bỏ khóa API và dữ liệu riêng tư khỏi log hoặc ảnh đính kèm.
 
-A standalone [LM Studio](https://lmstudio.ai) plugin at
-[`webbrain/web-tools`](https://lmstudio.ai/webbrain/web-tools):
+Xem [CONTRIBUTING.md](CONTRIBUTING.md) trước khi đóng góp và [CHANGELOG.md](CHANGELOG.md) để theo dõi thay đổi.
 
-```bash
-lms clone webbrain/web-tools
-```
+## Giấy phép
 
-`fetch_url` and `research_url` are pure Node HTTP — no browser needed, but also
-no cookies, no session and no JavaScript. With the extension installed on a
-Chromium browser, `browser_task` adds delegation to your real signed-in browser,
-reaching the authenticated and client-rendered pages plain HTTP cannot. It
-degrades with an actionable message when no extension is attached, and the HTTP
-tools keep working on Firefox.
-
-Source: [`lmstudio-plugin/`](lmstudio-plugin/).
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=webbrain-one%2Fwebbrain&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&theme=dark&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
- </picture>
-</a>
-
-## Contributors
-
-<a href="https://github.com/webbrain-one/webbrain/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=webbrain-one/webbrain" />
-</a>
-
-## Citation
-
-```bibtex
-@software{webbrain2026,
-  author = {Sokullu, Emre},
-  title = {WebBrain: Open-source AI browser agent for chatting with pages},
-  year = {2026},
-  publisher = {GitHub},
-  url = {https://github.com/webbrain-one/webbrain}
-}
-```
-
-## License
-
-GPL-3.0-or-later — see [LICENSE](LICENSE). This repository is AgentX WebMate, a modified
-version of WebBrain built by [Emre Sokullu](https://emresokullu.com). Code first
-published in WebBrain releases before 33.0.0 was MIT-licensed; that notice is
-kept in [LICENSE](LICENSE).
+Mã tiện ích được phân phối theo **GPL-3.0-or-later**. Xem [LICENSE](LICENSE) để biết toàn bộ điều khoản và các thông báo bản quyền áp dụng. Các thành phần có giấy phép riêng được ghi trong thư mục tương ứng, bao gồm [MCP server](mcp-server/LICENSE) và [plugin LM Studio](lmstudio-plugin/LICENSE).
