@@ -3,7 +3,7 @@ name: {{skillName}}
 description: Delegate browser tasks to the signed-in {{productName}} — read, extract or act on pages in the user's own Chrome through the `{{skillName}}` MCP server bundled in this skill. Use when a task needs a page behind the user's login (SSO dashboards, webmail, admin panels, internal tools), or when the user says "in my browser", "my account", or asks to open a site for them.
 license: MIT
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   author: AstralX Technology
   hermes:
     tags: [Browser, {{shortName}}, MCP, Delegation, Signed-In-Session, SSO, Webmail, Dashboards]
@@ -106,7 +106,10 @@ Statuses: `running`, `needs_user_input`, `completed`, `failed`, `aborted`.
 1. **Check the connection once per session.** Call `{{tool:connection}}`. If it
    says *Not connected*, relay its instructions to the user verbatim (open
    Chrome, enable the Cloud bridge on port 17374) and stop. Do not retry the
-   task in a loop.
+   task in a loop. A tool that fails with `license_read_only` means the AgentX
+   license of the account signed in to the extension is read-only: tell the
+   user what the message says (why, and whom to contact) and stop — retrying
+   does not help until the license changes.
 2. **Pick the mode from the verb in the task.** `mode="ask"` reads, extracts
    and summarises the page that is already open; it cannot navigate, click,
    type or submit. Use `mode="act"` the moment the task opens a site, searches

@@ -1,0 +1,235 @@
+diff --git a/src/background.js b/src/background.js
+--- a/src/background.js
++++ b/src/background.js
+@@ -13,6 +13,7 @@ import {
+   refreshBuiltInSkillRecord,
+ } from './agent/skills.js';
+ import { createAgentXHubSyncRunner } from './agentx/hub-sync.js';
++import { createAgentXLicenseGate } from './agentx/license-gate.js';
+ import { ScheduledJobManager } from './agent/scheduler.js';
+ import {
+   compileWorkflowFromDemonstration,
+@@ -164,7 +165,15 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
+     || detachedRunStarts.has(tabId)
+     || scheduler.isRunning(tabId),
+ });
+-agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
++// AgentX license (docs/workmate-integration.md): while the signed-in account
++// is read-only there is no AI in this extension at all, whichever provider
++// would answer. No agent run starts; the other ways in are held or refused
++// below (scheduled jobs, memory extraction, compaction, connection tests).
++const agentxLicense = createAgentXLicenseGate({ api: browser, locale: () => selectionShortcutLocale });
++agent.setRunStartGuard(async (tabId) => {
++  await teacherRunInterlock.guardRunStart(tabId);
++  await agentxLicense.assertAllowed();
++});
+ const runCaptureController = createRunCaptureController({
+   api: browser,
+   unsupportedRecordingMessage: 'Tab recording is not supported in Firefox.',
+@@ -189,9 +198,17 @@ const scheduler = new ScheduledJobManager({
+   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
+   hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
+   playWatchAlert: (payload) => playWatchAlert(browser, payload),
++  // Held (queued, retried) while the license is read-only — never failed.
++  runGate: agentxLicense.userRefusal,
+ });
+ agent.setScheduler(scheduler);
+ scheduler.start();
++// A license answer may allow AI again: release what waited for it now
++// rather than at its next retry.
++agentxLicense.onLicenseRecorded(() => {
++  scheduler.retryHeldJobs().catch(() => {});
++  scheduleUserMemoryExtractionDrain(0);
++});
+ 
+ const MAX_AGENT_STEPS_DEFAULT = 130;
+ const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
+@@ -726,6 +743,9 @@ async function drainUserMemoryExtractionQueue() {
+         await removeUserMemoryExtractionJob(job.id);
+         continue;
+       }
++      // Read-only AgentX license: the turns stay queued until a license
++      // answer allows AI again (the license listener drains them then).
++      if (await agentxLicense.refusal()) return;
+ 
+       try {
+         await customSkillsReady;
+@@ -2727,6 +2747,8 @@ async function handleMessage(msg, sender) {
+     case 'compact_conversation': {
+       const tabId = msg.tabId || sender.tab?.id;
+       if (!tabId) return { ok: false, error: 'No tab ID' };
++      // Compaction is a model call: refused (code license_read_only) while read-only.
++      await agentxLicense.assertAllowed();
+       return { ok: true, ...(await agent.compactConversation(tabId)) };
+     }
+ 
+@@ -3101,14 +3123,23 @@ async function handleMessage(msg, sender) {
+     }
+ 
+     case 'test_provider': {
++      // A connection test is a model call; while read-only it says why instead.
++      const licenseRefusal = await agentxLicense.userRefusal();
++      if (licenseRefusal) return { ok: false, error: licenseRefusal.message, code: licenseRefusal.code };
+       return await providerManager.testProvider(msg.providerId);
+     }
+ 
+     case 'test_vision_provider': {
++      // A connection test is a model call; while read-only it says why instead.
++      const licenseRefusal = await agentxLicense.userRefusal();
++      if (licenseRefusal) return { ok: false, error: licenseRefusal.message, code: licenseRefusal.code };
+       return await providerManager.testVisionProvider();
+     }
+ 
+     case 'test_transcription_provider': {
++      // A connection test is a model call; while read-only it says why instead.
++      const licenseRefusal = await agentxLicense.userRefusal();
++      if (licenseRefusal) return { ok: false, error: licenseRefusal.message, code: licenseRefusal.code };
+       return await providerManager.testTranscriptionProvider();
+     }
+ 
+diff --git a/src/agent/scheduler.js b/src/agent/scheduler.js
+--- a/src/agent/scheduler.js
++++ b/src/agent/scheduler.js
+@@ -7,6 +7,9 @@ export const MIN_RESUME_DELAY_MS = 30 * 1000;
+ export const MIN_DELAY_MS = 60 * 1000;
+ export const MAX_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
+ export const QUEUE_RETRY_MS = 30 * 1000;
++// How often a job the embedder's run gate holds back asks again (it is also
++// released at once through retryHeldJobs()).
++export const RUN_GATE_RETRY_MS = 5 * 60 * 1000;
+ export const MAX_QUEUE_DEFERRALS = 120;
+ export const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
+ export const MIN_INTERVAL_MINUTES = 1;
+@@ -521,6 +524,8 @@ export function summarizeScheduledJob(job) {
+     lastResult: job.lastResult || null,
+     lastOutcome: job.lastOutcome || null,
+     lastError: job.lastError || null,
++    // Why a queued job is waiting, when the run gate holds it (e.g. 'license_read_only').
++    heldBy: job.heldBy || null,
+     needsUserInput: job.status === 'needs_user_input',
+     clarificationRequired: job.clarificationRequired === true,
+     pendingClarify: job.pendingClarify || null,
+@@ -540,6 +545,7 @@ export class ScheduledJobManager {
+     hideIndicator = () => {},
+     playWatchAlert = async () => {},
+     now = () => Date.now(),
++    runGate = null,
+   }) {
+     this.api = api;
+     this.agent = agent;
+@@ -549,6 +555,9 @@ export class ScheduledJobManager {
+     this.hideIndicator = hideIndicator;
+     this.playWatchAlert = playWatchAlert;
+     this.now = now;
++    // async () => null | { message, code? }: may jobs run now? (AgentX: not
++    // while the account's license is read-only.) A refusal holds the job.
++    this.runGate = typeof runGate === 'function' ? runGate : null;
+     this._started = false;
+     this._waitingForInput = new Set();
+     this._runningTabs = new Set();
+@@ -1227,6 +1236,59 @@ export class ScheduledJobManager {
+     }
+   }
+ 
++  /**
++   * The embedder's refusal, or null. A gate that throws or answers anything but
++   * a refusal lets the job run: it is a way to wait, never a new way to fail.
++   */
++  async _runGateRefusal() {
++    if (!this.runGate) return null;
++    try {
++      const verdict = await this.runGate();
++      return verdict && typeof verdict === 'object' && String(verdict.message || '').trim() ? verdict : null;
++    } catch {
++      return null;
++    }
++  }
++
++  /** Whether `error` is the gate's own refusal (thrown by a run-start guard), not a failure of the job. */
++  _isGateRefusal(error, refusal) {
++    return Boolean(refusal) && error?.code != null && error.code === refusal.code;
++  }
++
++  /**
++   * Holds a job the run gate refuses: queued, retried every RUN_GATE_RETRY_MS
++   * and whenever retryHeldJobs() is called, never failed and never counted
++   * against MAX_QUEUE_DEFERRALS, so it resumes by itself once the gate opens.
++   * The panel hears about it once, not on every retry.
++   */
++  async _holdJob(job, refusal) {
++    const heldBy = String(refusal.code || 'run_gate');
++    const held = await this._updateJobIf(job.id, (prev) => (
++      ['pending', 'queued', 'running'].includes(prev.status)
++    ), () => ({
++      status: 'queued',
++      nextRunAt: iso(this.now() + RUN_GATE_RETRY_MS),
++      heldBy,
++      lastError: String(refusal.message),
++      lastOutcome: null,
++      pendingClarify: null,
++    }));
++    if (!held) return;
++    await this._setAlarm(held);
++    if (job.heldBy !== heldBy) this._emit(held, 'queued');
++  }
++
++  /** Asks the run gate again for every held job now (e.g. the license was renewed). */
++  async retryHeldJobs() {
++    const jobs = await this._getJobs();
++    for (const job of jobs) {
++      if (job.status !== 'queued' || !job.heldBy) continue;
++      try {
++        await this.api.alarms.create(this._alarmName(job.id), { when: this.now() });
++      } catch { /* the RUN_GATE_RETRY_MS alarm still stands */ }
++    }
++  }
++
+   async _resolveTab(job) {
+     if (job.kind === 'resume' || job.target?.type === 'current_tab') {
+       const tabId = job.tabId || job.target?.tabId;
+@@ -1506,6 +1568,11 @@ export class ScheduledJobManager {
+       if (paused) this._emit(paused, 'paused');
+       return;
+     }
++    const gateRefusal = await this._runGateRefusal();
++    if (gateRefusal) {
++      await this._holdJob(job, gateRefusal);
++      return;
++    }
+ 
+     let tabId;
+     let reservedTabId = null;
+@@ -1547,7 +1614,11 @@ export class ScheduledJobManager {
+       if (isActiveRunError(e) || e?.code === 'teacher_mode_active') {
+         await this._requeue(job, 'The target tab already has an active WebBrain run.');
+       } else {
+-        await this._markFailed(job, e.message);
++        // The run-start guard may refuse for the gate's reason (it closed in
++        // between): that job waits, it has not failed.
++        const refusal = await this._runGateRefusal();
++        if (this._isGateRefusal(e, refusal)) await this._holdJob(job, refusal);
++        else await this._markFailed(job, e.message);
+       }
+       return;
+     }
+@@ -1558,6 +1629,7 @@ export class ScheduledJobManager {
+       status: 'running',
+       tabId,
+       queueDeferrals: 0,
++      heldBy: null,
+       startedAt: iso(this.now()),
+       lastError: null,
+       lastOutcome: null,
+@@ -1690,7 +1762,11 @@ export class ScheduledJobManager {
+       if (isActiveRunError(e)) {
+         await this._requeue(running, 'The target tab already has an active WebBrain run.');
+       } else {
+-        await this._markFailed(running, e.message);
++        // Only the run-start refusal is held: it comes before the agent has
++        // done anything. A run that failed halfway is a failed job, as before.
++        const refusal = await this._runGateRefusal();
++        if (this._isGateRefusal(e, refusal)) await this._holdJob(running, refusal);
++        else await this._markFailed(running, e.message);
+       }
+     } finally {
+       this._runningTabs.delete(tabId);

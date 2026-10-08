@@ -336,7 +336,10 @@ Every failing tool result starts with a structured code and repeats it as
 `WEBMATE_NOT_INSTALLED`, `WEBMATE_NOT_CONNECTED`, `WEBMATE_OUTDATED`,
 `WEBMATE_NOT_SIGNED_IN`, `WEBMATE_PORT_IN_USE` (`WEBMATE_DISABLED` is raised by
 Workmate itself). `webmate_connection` additionally reports the extension's
-version, browser, install type and sign-in state.
+version, browser, install type and sign-in state. A refusal the extension codes
+itself keeps its own code: `license_read_only` (the AgentX license of the
+account signed in to the extension is read-only) comes with
+`structuredContent.license`, the license object the keys service reported.
 
 ## Security notes
 

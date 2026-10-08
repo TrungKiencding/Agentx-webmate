@@ -430,7 +430,7 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/run-reconnect.js').replace(/\\/g, '/')
 );
-const { buildCloudPersistenceRows, createCloudRunController, normalizeCloudBridgeUrl } = await import(
+const { buildCloudPersistenceRows, cloudSafeScheduledJob, createCloudRunController, normalizeCloudBridgeUrl } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/cloud-runs.js').replace(/\\/g, '/')
 );
 const {
@@ -18984,7 +18984,7 @@ test('cloud run controller forwards Ask mode and inherits it for continuations',
 
 // A stub browser for the permission-mode wire tests below. Deliberately small:
 // each test asserts one thing about how the mode travels, not about run bodies.
-function permissionModeCloudHarness({ providerManager } = {}) {
+function permissionModeCloudHarness({ providerManager, runGate } = {}) {
   const session = {};
   const tab = { id: 91, url: 'https://example.com/report', active: true, windowId: 9 };
   const seen = [];
@@ -19018,6 +19018,7 @@ function permissionModeCloudHarness({ providerManager } = {}) {
     },
     ensureOffscreen: async () => {},
     makeRunId: () => `run_pm_${++nextRun}`,
+    ...(runGate === undefined ? {} : { runGate }),
   });
   const settle = () => new Promise(resolve => setTimeout(resolve, 0));
   return { controller, seen, activatedTabs, settle };
@@ -19135,6 +19136,158 @@ test('a browser the controller cannot interrogate is not refused on a guess', as
   await controller.startRun({ task: 'Open the report' });
   await settle();
   assert.deepEqual(seen, ['']);
+});
+
+test('a run gate refusal stops the run before the browser moves, keeping its code and license', async () => {
+  // AgentX wires a read-only license in here (brand patch 091). The gate is
+  // asked before the provider check: an account that may not run at all has
+  // no key either, and "sign in" would be the wrong thing to tell it.
+  const license = { state: 'expired', access: 'read_only', enforced: true, last_day: '2026-12-31' };
+  let asked = 0;
+  const { controller, seen, activatedTabs, settle } = permissionModeCloudHarness({
+    providerManager: { getActive: () => ({ config: { label: 'AgentX Cloud', requiresApiKey: true, apiKey: '' } }) },
+    runGate: async () => {
+      asked += 1;
+      return {
+        status: 403,
+        code: 'license_read_only',
+        message: 'AgentX WebMate is read-only for this account, so it cannot run this task.',
+        license,
+      };
+    },
+  });
+  const refused = (error) => {
+    assert.equal(error.status, 403);
+    assert.equal(error.code, 'license_read_only');
+    assert.deepEqual(error.license, license);
+    assert.match(error.message, /read-only for this account/);
+    return true;
+  };
+  await assert.rejects(() => controller.startRun({ task: 'Open the report' }), refused);
+  // Saved workflows start through the same door.
+  await assert.rejects(() => controller.startWorkflowRun({
+    workflow: {
+      schema: 'webbrain-workflow/1',
+      id: 'wf_license',
+      name: 'Open the report',
+      start: { origin: 'https://example.com' },
+      steps: [{ tool: 'navigate', args: { url: 'https://example.com/report' } }],
+    },
+  }), refused);
+  await settle();
+  assert.equal(asked, 2);
+  assert.deepEqual(seen, [], 'the agent must never be dispatched');
+  assert.deepEqual(activatedTabs, [], 'a refused run must not bring a tab to the front');
+  assert.deepEqual((await controller.status({})).runs, [], 'a refused run leaves no record');
+});
+
+test('a run gate that fails, or answers something that is not a refusal, never stops a run', async () => {
+  for (const [label, runGate] of [
+    ['throws', async () => { throw new Error('license service exploded'); }],
+    ['null', async () => null],
+    ['no message', async () => ({ status: 403, code: 'license_read_only' })],
+    ['not an object', async () => 'refuse'],
+    ['not a function', 'nope'],
+  ]) {
+    const { controller, seen, settle } = permissionModeCloudHarness({ runGate });
+    const started = await controller.startRun({ task: 'Open the report' });
+    await settle();
+    assert.deepEqual(seen, [''], `${label}: the run must start`);
+    assert.equal(started.status, 'running', label);
+  }
+  // A refusal without a usable status still refuses — as 403.
+  const odd = permissionModeCloudHarness({ runGate: async () => ({ message: 'No.', status: 200, code: 7, license: 'x' }) });
+  await assert.rejects(() => odd.controller.startRun({ task: 'Open the report' }), (error) => {
+    assert.equal(error.status, 403);
+    assert.equal(error.code, undefined, 'only a string code travels');
+    assert.equal(error.license, undefined, 'only an object license travels');
+    return true;
+  });
+});
+
+test('a run waiting on the gate counts as busy, and an update drain armed meanwhile wins', async () => {
+  // The gate may wait on the network (AgentX re-checks a read-only license).
+  // Workmate's prepare_update must not see "0 busy" and reload the extension
+  // under a run that is about to start.
+  let releaseGate;
+  const { controller, seen, activatedTabs, settle } = permissionModeCloudHarness({
+    runGate: () => new Promise((resolve) => { releaseGate = resolve; }),
+  });
+  const pending = controller.startRun({ task: 'Open the report' });
+  await settle();
+  try {
+    const draining = await controller.prepareUpdate({});
+    assert.equal(draining.draining, true);
+    assert.equal(draining.busy, 1, 'the run at the gate is busy');
+    releaseGate(null);
+    await assert.rejects(pending, (error) => {
+      assert.equal(error.status, 503);
+      assert.match(error.message, /about to update/);
+      return true;
+    });
+    assert.deepEqual(seen, [], 'the agent must never be dispatched');
+    assert.deepEqual(activatedTabs, []);
+    assert.equal((await controller.prepareUpdate({})).busy, 0);
+  } finally {
+    await controller.prepareUpdate({ resume: true });
+  }
+  // With the drain lifted, the next run goes through the gate as usual.
+  const next = controller.startRun({ task: 'Open the report' });
+  await settle();
+  releaseGate(null);
+  await next;
+  await settle();
+  assert.deepEqual(seen, ['']);
+});
+
+test('a strict-mode bridge job summary still says what a queued job waits for', () => {
+  const held = cloudSafeScheduledJob({
+    id: 'job_1', kind: 'task', source: 'user', status: 'queued', heldBy: 'license_read_only',
+    lastError: 'private reason', scheduledAt: '2026-12-01T00:00:00.000Z',
+  }, { strictSecretMode: true });
+  assert.equal(held.heldBy, 'license_read_only');
+  assert.equal(held.lastError, undefined, 'strict mode still drops free text');
+  assert.equal(cloudSafeScheduledJob({ id: 'job_2', status: 'pending' }, { strictSecretMode: true }).heldBy, null);
+});
+
+test('offscreen cloud bridge passes a refusal code and license on to the server', async () => {
+  const license = { state: 'revoked', access: 'read_only', contact: 'it@example.test' };
+  const { sockets, start } = createOffscreenCloudBridgeHarness({
+    sendMessage: async message => {
+      if (message.action === 'cloud_run' && message.task === 'licensed') {
+        return { error: 'AgentX WebMate is read-only for this account.', status: 403, code: 'license_read_only', license };
+      }
+      if (message.action === 'cloud_run') {
+        return { error: 'Tab 9 is not a controllable webpage.', status: 500, code: 12, license: 'not-an-object' };
+      }
+      return {};
+    },
+  });
+  await start('ws://127.0.0.1:17373/extension');
+  const socket = sockets[0];
+  socket.emit('open');
+
+  socket.emit('message', { data: JSON.stringify({ id: 'run-1', action: 'cloud_run', payload: { task: 'licensed' } }) });
+  await new Promise(resolve => setImmediate(resolve));
+  const refused = socket.sent.find(message => message.id === 'run-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(refused)), {
+    id: 'run-1',
+    ok: false,
+    error: 'AgentX WebMate is read-only for this account.',
+    status: 403,
+    code: 'license_read_only',
+    license,
+  });
+
+  socket.emit('message', { data: JSON.stringify({ id: 'run-2', action: 'cloud_run', payload: { task: 'other' } }) });
+  await new Promise(resolve => setImmediate(resolve));
+  const plain = socket.sent.find(message => message.id === 'run-2');
+  assert.deepEqual(JSON.parse(JSON.stringify(plain)), {
+    id: 'run-2',
+    ok: false,
+    error: 'Tab 9 is not a controllable webpage.',
+    status: 500,
+  }, 'anything but a string code and an object license stays behind');
 });
 
 test('cloud run controller fails clarification-required terminals without schema fallback', async () => {

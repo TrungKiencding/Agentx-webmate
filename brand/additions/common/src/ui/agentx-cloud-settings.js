@@ -1,11 +1,16 @@
 import { AGENTX_RUNTIME_CONFIG } from '../agentx/runtime-config.js';
-import { createAgentXCloudService, AgentXCloudError } from '../agentx/cloud-service.js';
+import {
+  AGENTX_LICENSE_STORAGE_KEY,
+  createAgentXCloudService,
+  AgentXCloudError,
+} from '../agentx/cloud-service.js';
 import {
   AGENTX_CLOUD_PROVIDER_ID,
   installCloudCredential,
   removeCloudCredential,
 } from '../agentx/cloud-provider-install.js';
 import { transcriptionModelsFromGateway, visionModelsFromGateway } from '../agentx/cloud-models.js';
+import { isLicenseReadOnly } from '../agentx/license.js';
 import {
   bindAgentXCloudPanel,
   bindAgentXCloudTranscriptionPanel,
@@ -76,6 +81,9 @@ export function createAgentXCloudSettingsController({
     action: 'restoring',
     error: null,
     provider: null,
+    // The account's AgentX license as last reported by the keys service; null
+    // while none is known (signed out, or an SSO from before licensing).
+    license: null,
     configuredLiteLlmBaseUrl: config.litellmBaseUrl,
     secondBrainBaseUrl: config.secondBrainBaseUrl,
   };
@@ -85,6 +93,37 @@ export function createAgentXCloudSettingsController({
     onRender?.();
     return status;
   }
+
+  /**
+   * The license to show once the key is installed: a check (throttled, or
+   * `force` when the user asked for one) — a cached key LiteLLM still accepts
+   * never reaches the keys service, so this is how the card learns of it.
+   * Never throws; a failed check keeps the last license recorded.
+   */
+  async function checkedLicense({ force = false } = {}) {
+    const checked = await service.refreshLicense({ force }).catch(() => null);
+    if (checked) return checked.signedIn ? checked.license : null;
+    return recordedLicense();
+  }
+
+  /** After a failure: the license a refusal carried, else the last one recorded. No network. */
+  async function recordedLicense(error = null) {
+    if (error?.license) return error.license;
+    const known = await service.knownLicense().catch(() => null);
+    return known?.signedIn ? known.license : null;
+  }
+
+  // The panel, or a Workmate-driven run in the background, may learn of a new
+  // license while this page is open: follow the record.
+  api?.storage?.onChanged?.addListener?.((changes, area) => {
+    if (area && area !== 'local') return;
+    if (!changes || !(AGENTX_LICENSE_STORAGE_KEY in changes) || !status.signedIn) return;
+    void service.knownLicense().then((known) => {
+      if (!known.signedIn || !status.signedIn) return;
+      if (JSON.stringify(known.license) === JSON.stringify(status.license)) return;
+      paint({ license: known.license });
+    }).catch(() => {});
+  });
 
   // The composer model chip writes the same provider entry this card renders
   // (update_provider with { model }), so a Settings page left open must follow
@@ -141,8 +180,25 @@ export function createAgentXCloudSettingsController({
     };
   }
 
-  async function connectWith(operation) {
+  async function connectWith(operation, { forceLicense = false } = {}) {
     const result = await operation();
+    const license = await checkedLicense({ force: forceLicense });
+    if (isLicenseReadOnly(license)) {
+      // As in the side panel: a read-only account gets no Cloud connection,
+      // even while the gateway still accepts its cached key.
+      paint({
+        ...(await statusFromSession()),
+        signedIn: true,
+        connected: false,
+        provider: null,
+        license,
+        action: null,
+        error: null,
+        testOk: false,
+        testModel: '',
+      });
+      return;
+    }
     const installedCredential = await installCredential(result.credential);
     paint({
       ...(await statusFromSession()),
@@ -151,6 +207,7 @@ export function createAgentXCloudSettingsController({
       action: null,
       error: null,
       provider: publicProvider(installedCredential),
+      license,
       outcome: result.credential.provisionOutcome || result.credential.status || 'connected',
       warningCode: result.credential.warningCode || '',
       persistenceWarning: result.persistenceWarning || '',
@@ -170,6 +227,7 @@ export function createAgentXCloudSettingsController({
             ...restored,
             connected: false,
             provider: null,
+            license: null,
             action: null,
             error: null,
           });
@@ -183,6 +241,7 @@ export function createAgentXCloudSettingsController({
           ...latest,
           connected: false,
           provider: null,
+          license: latest.signedIn ? await recordedLicense(error) : null,
           action: null,
           error: publicError(error),
         });
@@ -196,7 +255,8 @@ export function createAgentXCloudSettingsController({
   async function perform(action, payload = {}) {
     if (running) return running;
     running = (async () => {
-      const actionName = {
+      // On a read-only account the retry button is "Kiểm tra lại".
+      const actionName = action === 'retry' && isLicenseReadOnly(status.license) ? 'checking-license' : {
         'sign-in': 'signing-in',
         retry: 'provisioning',
         test: 'testing',
@@ -229,7 +289,9 @@ export function createAgentXCloudSettingsController({
           return;
         }
         if (action === 'retry') {
-          await connectWith(() => service.retryProvision());
+          // Also the "Kiểm tra lại" of a read-only account: ask for the
+          // license now rather than within the usual interval.
+          await connectWith(() => service.retryProvision(), { forceLicense: true });
           return;
         }
         if (action === 'test') {
@@ -411,6 +473,7 @@ export function createAgentXCloudSettingsController({
           signedIn: false,
           connected: false,
           provider: null,
+          license: null,
           action: null,
           error: null,
           testOk: false,
@@ -428,6 +491,7 @@ export function createAgentXCloudSettingsController({
           ...latest,
           connected: status.connected,
           provider: status.provider,
+          license: latest.signedIn ? await recordedLicense(error) : null,
           action: null,
           error: publicError(error),
         });

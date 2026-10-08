@@ -62,8 +62,36 @@ const SENSITIVE_URL_PATH_LABELS = new Set([
   'credential', 'password', 'passcode', 'otp', 'downloadkey', 'sharetoken',
 ]);
 
-function cloudRunError(message, status) {
-  return Object.assign(new Error(message), { status });
+function cloudRunError(message, status, extra = {}) {
+  return Object.assign(new Error(message), { status }, extra);
+}
+
+/**
+ * Asks the embedder's run gate whether a run may start; a refusal comes back
+ * as the error to throw. The gate is the brand's policy (AgentX: a read-only
+ * license refuses with code `license_read_only` and the license itself, which
+ * the background passes on to the bridge so Workmate can say why). It is
+ * advisory plumbing, never a new way to fail: a gate that throws, or answers
+ * something that is not a refusal, lets the run start.
+ */
+async function runGateRefusal(runGate) {
+  if (typeof runGate !== 'function') return null;
+  let verdict;
+  try {
+    verdict = await runGate();
+  } catch {
+    return null;
+  }
+  if (!verdict || typeof verdict !== 'object') return null;
+  const message = String(verdict.message || '').trim();
+  if (!message) return null;
+  const status = Number.isInteger(verdict.status) && verdict.status >= 400 && verdict.status < 600
+    ? verdict.status
+    : 403;
+  return cloudRunError(message, status, {
+    ...(typeof verdict.code === 'string' && verdict.code ? { code: verdict.code } : {}),
+    ...(verdict.license && typeof verdict.license === 'object' ? { license: verdict.license } : {}),
+  });
 }
 
 export function normalizeCloudRunMode(value, fallback = 'act') {
@@ -714,6 +742,8 @@ export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
     scheduledAt: job.scheduledAt,
     nextRunAt: job.nextRunAt || job.scheduledAt,
     lastOutcome: job.lastOutcome || null,
+    // A queued job the embedder's run gate holds says so (e.g. 'license_read_only').
+    heldBy: job.heldBy || null,
     needsUserInput: job.needsUserInput === true,
     clarificationRequired: job.clarificationRequired === true,
     completedAt: job.completedAt || null,
@@ -790,6 +820,9 @@ export function createCloudRunController({
   now = () => new Date(),
   makeRunId = () => `run_${globalThis.crypto.randomUUID()}`,
   fetchImpl = (...args) => globalThis.fetch(...args),
+  // async () => null | { message, status?, code?, license? }: a refusal stops
+  // the run before anything happens in the browser (see runGateRefusal).
+  runGate = null,
 } = {}) {
   const api = chromeApi;
   const runs = new Map();
@@ -800,6 +833,10 @@ export function createCloudRunController({
   // "prepare" and "reload" must not leave the browser refusing work forever.
   const UPDATE_DRAIN_TIMEOUT_MS = 5 * 60_000;
   let updateDrain = null;
+  // Runs waiting on the embedder's run gate. They count as busy for the drain:
+  // a gate may wait on the network, and an update must not slip in under a
+  // run that is about to start.
+  let admittingRuns = 0;
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
@@ -1099,14 +1136,16 @@ export function createCloudRunController({
     return parameters;
   }
 
+  function drainRefusal() {
+    return cloudRunError(
+      'WebBrain is about to update itself and is not taking new runs; retry in a moment.',
+      503,
+    );
+  }
+
   async function startRun(msg = {}) {
     await hydrate();
-    if (updateDrain) {
-      throw cloudRunError(
-        'WebBrain is about to update itself and is not taking new runs; retry in a moment.',
-        503,
-      );
-    }
+    if (updateDrain) throw drainRefusal();
     const suppliedRunId = msg.runId ?? msg.run_id;
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
@@ -1127,8 +1166,20 @@ export function createCloudRunController({
         throw cloudRunError('Parent cloud run is no longer available and has no saved tab.', 409);
       }
     }
-    // Both refusals come before resolveTabId: a run that cannot start must not
-    // first activate — and possibly open — a tab in front of the user.
+    // Every refusal comes before resolveTabId: a run that cannot start must not
+    // first activate — and possibly open — a tab in front of the user. The
+    // gate goes first: an account that may not run at all (AgentX read-only
+    // license) should hear that, not "sign in", when it also has no key.
+    admittingRuns += 1;
+    let gateRefusal;
+    try {
+      gateRefusal = await runGateRefusal(runGate);
+    } finally {
+      admittingRuns -= 1;
+    }
+    if (gateRefusal) throw gateRefusal;
+    // A Workmate update may have started draining while the gate answered.
+    if (updateDrain) throw drainRefusal();
     const unusableProvider = describeUnusableProvider(agent);
     if (unusableProvider) throw cloudRunError(unusableProvider, 428);
     const permissionMode = cloudRunPermissionMode(msg, parentRun);
@@ -1492,7 +1543,7 @@ export function createCloudRunController({
 
   /** Runs that would be cut off by a runtime reload right now. */
   function busyRunCount() {
-    let busy = startingTabs.size;
+    let busy = startingTabs.size + admittingRuns;
     for (const run of runs.values()) {
       if (!TERMINAL_STATUSES.has(run.status)) busy += 1;
     }

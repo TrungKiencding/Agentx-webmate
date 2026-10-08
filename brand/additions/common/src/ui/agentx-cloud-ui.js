@@ -1,3 +1,12 @@
+import { isLicenseReadOnly, isLicenseRefusalCode } from '../agentx/license.js';
+import {
+  formatLicenseDay,
+  licenseNoticeSentence,
+  licenseReadOnlySentence,
+  licenseReinstateSentence,
+  licenseStateLabel,
+} from './agentx-license-copy.js';
+
 const COPY = {
   en: {
     eyebrow: 'ACCOUNT CONNECTION',
@@ -72,6 +81,12 @@ const COPY = {
     sign_in_cancelled: 'Sign-in was cancelled before it completed.',
     sign_in_timeout: 'Sign-in exceeded five minutes. Start the flow again.',
     genericError: 'Cloud connection failed. {detail}',
+    license: 'AgentX license',
+    licenseStartsOn: 'Starts',
+    licenseLastDay: 'Last day',
+    licenseContact: 'Contact',
+    licenseRecheck: 'Check again',
+    checkingLicense: 'Checking your license…',
   },
   vi: {
     eyebrow: 'KẾT NỐI TÀI KHOẢN',
@@ -146,6 +161,12 @@ const COPY = {
     sign_in_cancelled: 'Đăng nhập bị hủy giữa chừng.',
     sign_in_timeout: 'Quá 5 phút chưa đăng nhập xong. Hãy làm lại từ đầu.',
     genericError: 'Không kết nối được Cloud. {detail}',
+    license: 'Giấy phép AgentX',
+    licenseStartsOn: 'Bắt đầu',
+    licenseLastDay: 'Ngày cuối',
+    licenseContact: 'Liên hệ',
+    licenseRecheck: 'Kiểm tra lại',
+    checkingLicense: 'Đang kiểm tra giấy phép…',
   },
 };
 
@@ -192,12 +213,15 @@ function actionLabel(status, locale) {
   if (['test-transcription', 'testing-transcription'].includes(status.action)) return copy(locale, 'transcriptionTesting');
   if (['clear-transcription', 'clearing-transcription'].includes(status.action)) return copy(locale, 'transcriptionClearing');
   if (['sign-out', 'signing-out'].includes(status.action)) return copy(locale, 'signingOut');
+  if (status.action === 'checking-license') return copy(locale, 'checkingLicense');
   return '';
 }
 
 function errorMessage(status, locale) {
   const errorCode = status.errorCode || status.error?.code;
   if (!errorCode) return '';
+  // The license block says why, with the plan, the date and whom to ask.
+  if (isLicenseRefusalCode(errorCode) && status.license) return '';
   const translated = COPY[language(locale)][errorCode] || COPY.en[errorCode];
   if (translated) return translated;
   return copy(locale, 'genericError', {
@@ -294,14 +318,65 @@ function renderConnectionDetails(status, locale) {
     </dl>`;
 }
 
+/**
+ * The account's AgentX license: plan, state, last day, contact — shown
+ * whenever the keys service reported one, enforced or not — plus the warning
+ * that applies now (read-only, grace period, the reminder before the last
+ * day; never while licensing is not enforced).
+ */
+function renderLicense(status, locale) {
+  const license = status.license;
+  if (!license) return '';
+  const planName = license.plan?.name || license.plan?.slug || '';
+  const rows = [
+    `<div>
+        <dt>${escapeHtml(copy(locale, 'license'))}</dt>
+        <dd>
+          ${planName ? `<span>${escapeHtml(planName)}</span>` : ''}
+          <span class="agentx-cloud-license-state" data-state="${escapeHtml(license.state)}">${escapeHtml(licenseStateLabel(license, locale))}</span>
+        </dd>
+      </div>`,
+  ];
+  if (license.state === 'scheduled' && license.starts_on) {
+    rows.push(`<div>
+        <dt>${escapeHtml(copy(locale, 'licenseStartsOn'))}</dt>
+        <dd>${escapeHtml(formatLicenseDay(license.starts_on, locale))}</dd>
+      </div>`);
+  }
+  if (license.last_day) {
+    rows.push(`<div>
+        <dt>${escapeHtml(copy(locale, 'licenseLastDay'))}</dt>
+        <dd>${escapeHtml(formatLicenseDay(license.last_day, locale))}</dd>
+      </div>`);
+  }
+  if (license.contact) {
+    rows.push(`<div>
+        <dt>${escapeHtml(copy(locale, 'licenseContact'))}</dt>
+        <dd>${escapeHtml(license.contact)}</dd>
+      </div>`);
+  }
+  const warning = isLicenseReadOnly(license)
+    ? `${licenseReadOnlySentence(license, locale)} ${licenseReinstateSentence(license, locale)}`
+    : licenseNoticeSentence(license, locale);
+  return `
+    <div class="agentx-cloud-license" data-agentx-license>
+      <dl class="agentx-cloud-details">${rows.join('')}</dl>
+      ${renderNotice(isLicenseReadOnly(license) ? 'error' : 'warning', warning)}
+    </div>`;
+}
+
 function renderSignedIn(status, locale) {
   const connected = status.connected === true;
   const user = status.user || {};
   const title = user.displayName || user.email || copy(locale, 'connected');
   const offline = status.outcome === 'stale-offline';
+  const readOnly = isLicenseReadOnly(status.license);
   const testMessage = status.testOk
     ? copy(locale, 'testPassed', { model: status.testModel || status.provider?.model || 'model' })
     : '';
+  // A read-only account is not "one step from connected": the license block
+  // says why, and the primary action re-checks the license.
+  const pendingLabel = readOnly ? licenseStateLabel(status.license, locale) : copy(locale, 'retry');
   return `
     <section class="agentx-cloud-auth" aria-labelledby="agentx-cloud-account-title">
       <header class="agentx-cloud-account">
@@ -311,12 +386,13 @@ function renderSignedIn(status, locale) {
           ${user.email && user.email !== title ? `<span>${escapeHtml(user.email)}</span>` : ''}
         </span>
         <span class="agentx-cloud-connection-label" data-state="${connected ? 'connected' : 'pending'}">
-          ${escapeHtml(connected ? copy(locale, 'connected') : copy(locale, 'retry'))}
+          ${escapeHtml(connected ? copy(locale, 'connected') : pendingLabel)}
         </span>
       </header>
-      ${connected ? renderConnectionDetails(status, locale) : `
+      ${connected ? renderConnectionDetails(status, locale) : (readOnly ? '' : `
         <p class="agentx-cloud-pending">${escapeHtml(copy(locale, 'signedInNotConnected'))}</p>
-      `}
+      `)}
+      ${renderLicense(status, locale)}
       ${offline ? renderNotice('warning', copy(locale, 'sessionOffline')) : ''}
       ${status.persistenceWarning ? renderNotice('warning', copy(locale, 'persistenceWarning')) : ''}
       ${renderNotice('error', errorMessage(status, locale))}
@@ -324,7 +400,7 @@ function renderSignedIn(status, locale) {
       ${renderBusy(status, locale)}
       <p class="agentx-cloud-key-note">${escapeHtml(copy(locale, 'keyProtected'))}</p>
       <div class="agentx-cloud-actions">
-        ${connected ? `
+        ${connected && !readOnly ? `
           <button
             type="button"
             class="btn-secondary agentx-cloud-button"
@@ -337,7 +413,7 @@ function renderSignedIn(status, locale) {
             class="btn-primary agentx-cloud-button"
             data-agentx-cloud-action="retry"
             ${status.action ? 'disabled aria-disabled="true"' : ''}
-          >${escapeHtml(copy(locale, 'retry'))}</button>
+          >${escapeHtml(copy(locale, readOnly ? 'licenseRecheck' : 'retry'))}</button>
         `}
         <button
           type="button"

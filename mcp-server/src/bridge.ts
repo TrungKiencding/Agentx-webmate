@@ -46,7 +46,7 @@ import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { BRAND } from "./brand.generated.js";
 import { config } from "./config.js";
-import { BridgeError } from "./errors.js";
+import { BridgeError, refusalFrom } from "./errors.js";
 import { describeHolder, findPortHolder, isSupervisedWebmateServer } from "./holder.js";
 import { log } from "./log.js";
 import { readPairing as readPairingFile, type Pairing } from "./pairing.js";
@@ -1311,7 +1311,9 @@ export class WebMateBridge {
 
     if (msg.ok === false) {
       const status = typeof msg.status === "number" ? msg.status : undefined;
-      entry.reject(new BridgeError(String(msg.error || "Unknown bridge error"), status));
+      entry.reject(
+        new BridgeError(String(msg.error || "Unknown bridge error"), status, undefined, undefined, refusalFrom(msg)),
+      );
       return;
     }
     entry.resolve(msg.result);

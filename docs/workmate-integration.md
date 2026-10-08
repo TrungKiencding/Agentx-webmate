@@ -165,6 +165,12 @@ Every failing tool result starts with one of these and repeats it as
 `WEBMATE_PORT_IN_USE`. `WEBMATE_DISABLED` is raised by Workmate itself when the
 server is switched off.
 
+The extension can also refuse a run for a reason of its own, about the person's
+account rather than the plumbing. Those codes (`EXTENSION_REFUSAL_CODES` in
+`mcp-server/src/errors.ts`) lead the text and ride as `structuredContent.code`
+the same way; today there is one, `license_read_only` (see *AgentX license*
+below), and it brings `structuredContent.license` with it.
+
 ## Extension ID
 
 `brand/brand.config.json` → `manifestOverrides.chrome.key` pins the ID
@@ -286,6 +292,91 @@ answer.
 The side panel's sign-in gate arms its storage listener from the start, so a
 panel sitting on "Đăng nhập để bắt đầu" unlocks by itself when the background
 signs in.
+
+## AgentX license
+
+One AgentX license covers Workmate, WebMate and Chat; the SSO decides it and
+the keys service reports it (the contract lives with the keys service in the
+AgentX SSO repository): `GET /v1/license` → `{ "license": LICENSE }` with the
+same bearer and device headers as `/v1/model-key`, which itself gains
+`license` beside the key and three 403 refusals — `license_required` (state
+`none` or `scheduled`), `license_expired`, `license_revoked` — whose body
+carries `license` too. `license.access` is the only blocking signal
+(`read_only` blocks; it is always `full` while the SSO's "enforced" switch is
+off); `license.notice` says what to show now.
+
+What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
+`cloud-service.js`, `ui/agentx-login-gate.js`, `ui/agentx-cloud-*.js`):
+
+- **The last known license, per account,** in `chrome.storage.local`
+  `agentxLicenseV1` — `{ version: 1, records: [{ subject, license, fetchedAt
+  }] }`, written only with an answer from the keys service (every license
+  check, every `/v1/model-key` answer that carries one); a slower answer never
+  replaces a later one stored by another document. Bookkeeping lives beside
+  it in `agentxLicenseStateV1` — `{ subject, failedAt, expiringNoticeShown }`
+  — so it never rewrites a license. Both are dropped on sign-out.
+- **When it is asked for:** when the side panel opens or restores, and when it
+  becomes visible again or polls (every minute) — but at most once per fifteen
+  minutes after an answer, and once a minute after a failed check, unless the
+  person presses "Kiểm tra lại". Settings asks when it opens. A cached key that
+  LiteLLM still accepts never reaches the keys service, so this check is how a
+  panel learns the account went read-only before the gateway blocks the key.
+- **Outages never lock anybody.** A check that fails keeps the last known
+  license; none known means full access. A `/v1/license` that answers 404
+  `not_found` is an SSO from before licensing: no license, and any old one is
+  forgotten — WebMate then behaves exactly as it did before licensing.
+- **A license refusal from `/v1/model-key` is definitive.** It never falls back
+  to the cached key as `stale-offline`, and it never signs the person out: they
+  stay signed in, read-only.
+- **Read-only locks the whole panel** on the license screen (WebMate has no
+  history to browse): the reason by state, whom to contact, "Kiểm tra lại"
+  (asks now; unlocks once the license allows WebMate again) and "Mở Cài đặt".
+  `grace` shows a warning strip under the panel header for as long as it
+  lasts; `expiring` shows a dismissible reminder once per (plan, last day,
+  reminder threshold). Settings → Providers shows plan, state, last day and
+  contact in the account card whenever a license is known, enforced or not.
+- **No AI at all while read-only, whichever provider would answer** — the
+  managed gateway or one the person configured with their own key. One gate
+  in the background (`agentx/license-gate.js`, wired by brand patch
+  `091-agentx-license-gate.patch` into `background.js`, `agent/scheduler.js`
+  and, on Chrome, `recorder/host.js`) stands in front of every way in:
+
+  | Entry point | While read-only |
+  |---|---|
+  | Every agent run — side-panel chat and streaming, "continue", saved-workflow replays, prompts queued by the context menu and the selection shortcut, scheduled and bridge runs | The agent's run-start guard refuses before any step (code `license_read_only`, the panel's own wording). |
+  | Scheduled tasks, watches, resume jobs (`chrome.alarms` / `browser.alarms`) | **Held, not failed:** `queued` with `heldBy: "license_read_only"`, asked again every five minutes and at once whenever a license answer is recorded, never counted against the queue-deferral cap or a watch's failure budget; the panel hears it once. They run as soon as the license allows AI again. A refusal at the run-start guard (the license changed in between) is held the same way; a run that failed halfway is still a failed job, so nothing half-done is repeated. |
+  | User-memory extraction after a turn | Stays queued; drained when a license answer allows AI again. |
+  | Conversation compaction (`/compact`) | Refused with the license reason. |
+  | Settings connection tests (provider, vision, transcription) | Answer the license reason instead of calling the model. |
+  | Tab Recorder transcription (Chrome) | The recording is saved; the transcription answers the license reason without reading the audio. |
+  | Workmate-driven bridge runs (Chrome) | Refused before anything happens — see below. |
+
+  Not AI, so untouched: model lists, context-window and vision-capability
+  metadata, the gateway key probe, the Skill Hub sync. The gate fails open —
+  no session, no license known, a license service that is down — exactly
+  like everything else here; the gateway blocking the key stays the hard
+  stop.
+- **Workmate-driven runs are refused while read-only.** Chrome's background
+  passes `cloud-runs.js` a `runGate` that answers from the last known
+  license — re-checked first when it says read-only, so a renewal is not
+  refused on an old answer; a full or unknown license lets the run start at
+  once and is re-checked behind it. The background never refreshes the
+  session for this: it asks with the stored ID token, and not at all once that
+  has expired. A run waiting on the gate counts as busy for
+  `workmate_prepare_update`, and a drain armed meanwhile refuses it (503). The
+  refusal leaves the extension as
+
+  ```json
+  { "id": 7, "ok": false, "status": 403, "code": "license_read_only",
+    "error": "AgentX WebMate is read-only for this account, so it cannot run this task: …",
+    "license": { "state": "expired", "access": "read_only", … } }
+  ```
+
+  and the MCP server (1.4.0 and later) turns it into a failing tool result
+  whose text starts with `license_read_only: ` and whose `structuredContent`
+  is `{ code: "license_read_only", message, license }`, on a relayed copy too.
+  Nothing else starts: no tab is brought forward, no run is recorded. Firefox
+  has no bridge, so nothing to refuse there.
 
 ## Developer checkout
 

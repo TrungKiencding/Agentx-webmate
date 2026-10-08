@@ -38,7 +38,7 @@ import {
 } from "./bridge.js";
 import { CommandWatcher, type CommandOutcome, type WorkmateCommand } from "./commands.js";
 import { bridgeUrl, config } from "./config.js";
-import type { WebmateErrorCode } from "./errors.js";
+import type { ExtensionRefusalCode, WebmateErrorCode } from "./errors.js";
 import { log } from "./log.js";
 import { StateFile } from "./state.js";
 import { SERVER_VERSION } from "./version.js";
@@ -349,19 +349,32 @@ const ok = (text: string, structuredContent?: Record<string, unknown>): TextResu
 });
 
 /**
- * A failure. When it maps to one of the WEBMATE_* codes the code leads the
- * text AND rides along as `structuredContent.code`, so Workmate can match it
- * without parsing prose and the agent still reads a full sentence.
+ * A failure. When it maps to one of the WEBMATE_* codes — or to a refusal the
+ * extension coded itself (EXTENSION_REFUSAL_CODES) — the code leads the text
+ * AND rides along as `structuredContent.code`, so Workmate can match it
+ * without parsing prose and the agent still reads a full sentence. `extra`
+ * adds fields beside it (the license of a `license_read_only` refusal).
  */
-const fail = (text: string, code?: WebmateErrorCode): TextResult => ({
+const fail = (
+  text: string,
+  code?: WebmateErrorCode | ExtensionRefusalCode,
+  extra?: Record<string, unknown>,
+): TextResult => ({
   content: [{ type: "text", text: code ? `${code}: ${text}` : text }],
   isError: true,
-  ...(code ? { structuredContent: { code, message: text } } : {}),
+  ...(code ? { structuredContent: { code, message: text, ...extra } } : {}),
 });
 
 function toolError(error: unknown): TextResult {
   if (error instanceof BridgeError) {
     if (error.webmateCode) return fail(error.message, error.webmateCode);
+    if (error.refusal) {
+      return fail(
+        error.message,
+        error.refusal.code,
+        error.refusal.license ? { license: error.refusal.license } : undefined,
+      );
+    }
     // 428 is the extension refusing to start because it has no usable model
     // provider. In this brand that means nobody is signed in to the panel.
     if (error.status === 428) return fail(error.message, "WEBMATE_NOT_SIGNED_IN");
