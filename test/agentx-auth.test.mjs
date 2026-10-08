@@ -16,7 +16,7 @@ const TRANSCRIBE_PATH = path.join(CHROME_ROOT, 'src/agent/transcribe.js');
 const MODELS_PATH = path.join(CHROME_ROOT, 'src/agentx/cloud-models.js');
 const LICENSE_PATH = path.join(CHROME_ROOT, 'src/agentx/license.js');
 const LICENSE_COPY_PATH = path.join(CHROME_ROOT, 'src/ui/agentx-license-copy.js');
-const LICENSE_RUN_GATE_PATH = path.join(CHROME_ROOT, 'src/agentx/license-run-gate.js');
+const LICENSE_GATE_PATH = path.join(CHROME_ROOT, 'src/agentx/license-gate.js');
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
@@ -45,7 +45,7 @@ const {
   licenseReinstateSentence,
   licenseStateLabel,
 } = await import(pathToFileURL(LICENSE_COPY_PATH).href);
-const { createAgentXLicenseRunGate } = await import(pathToFileURL(LICENSE_RUN_GATE_PATH).href);
+const { createAgentXLicenseGate, isLicenseRefusalError } = await import(pathToFileURL(LICENSE_GATE_PATH).href);
 const { createAgentXCloudSettingsController } = await import(pathToFileURL(CONTROLLER_PATH).href);
 const { createAgentXLoginGate } = await import(pathToFileURL(GATE_PATH).href);
 const { createWorkmateAuth, LOGIN_REQUIRED_HOLDOFF_MS } = await import(pathToFileURL(WORKMATE_AUTH_PATH).href);
@@ -3074,27 +3074,419 @@ test('both branded targets carry the license banner under the panel header', asy
 
 // ─── License and Workmate-driven runs ─────────────────────────────────────
 
-test('the background run gate asks the license service and fails open', async () => {
-  const refusal = { status: 403, code: 'license_read_only', message: 'read-only', license: { access: 'read_only' } };
-  const asked = [];
-  const gate = createAgentXLicenseRunGate({ api: {}, service: { licenseRunRefusal: async () => { asked.push(1); return refusal; } } });
-  assert.equal(await gate(), refusal);
-  assert.equal(asked.length, 1);
-  // A service that throws, or cannot even be built: the run is not the gate's to stop.
-  const broken = createAgentXLicenseRunGate({ api: {}, service: { licenseRunRefusal: async () => { throw new Error('boom'); } } });
-  assert.equal(await broken(), null);
-  const unbuildable = createAgentXLicenseRunGate({ api: {} });
-  assert.equal(await unbuildable(), null, 'no extension API: fail open');
+test('the background license gate refuses for agents and for people, and fails open', async () => {
+  const license = normalizeLicense(licenseBody(EXPIRED));
+  const english = { status: 403, code: 'license_read_only', message: 'AgentX WebMate is read-only…', license };
+  let answer = english;
+  let lang = 'vi';
+  const gate = createAgentXLicenseGate({
+    api: {},
+    service: { licenseRunRefusal: async () => answer },
+    locale: () => lang,
+  });
+  // The bridge (an agent) reads English; a person reads the license screen's own words.
+  assert.equal(await gate.refusal(), english);
+  const person = await gate.userRefusal();
+  assert.equal(person.code, 'license_read_only');
+  assert.equal(person.status, 403);
+  assert.equal(person.license, license);
+  assert.equal(person.message, 'Gói Pilot nội bộ 2026 đã hết hạn ngày 31/12/2026. Liên hệ it@astralx.com.vn để được cấp lại hoặc gia hạn.');
+  lang = 'en';
+  assert.equal((await gate.userRefusal()).message, 'The Pilot nội bộ 2026 plan expired on 31 Dec 2026. Contact it@astralx.com.vn to have it reissued or renewed.');
+  // A run-start guard refuses by throwing.
+  await assert.rejects(() => gate.assertAllowed(), (error) => {
+    assert.equal(isLicenseRefusalError(error), true);
+    assert.equal(error.code, 'license_read_only');
+    assert.equal(error.status, 403);
+    assert.equal(error.license, license);
+    assert.match(error.message, /^The Pilot nội bộ 2026 plan expired/);
+    return true;
+  });
+  answer = null;
+  assert.equal(await gate.refusal(), null);
+  assert.equal(await gate.userRefusal(), null);
+  await gate.assertAllowed();
+  // A locale getter that throws (called before the background set it up) still reads.
+  const early = createAgentXLicenseGate({ api: {}, service: { licenseRunRefusal: async () => english }, locale: () => { throw new ReferenceError('TDZ'); } });
+  assert.match((await early.userRefusal()).message, /^Gói Pilot nội bộ 2026 đã hết hạn/);
+  // A service that throws, or cannot even be built: nothing is stopped.
+  const broken = createAgentXLicenseGate({ api: {}, service: { licenseRunRefusal: async () => { throw new Error('boom'); } } });
+  assert.equal(await broken.refusal(), null);
+  await broken.assertAllowed();
+  const unbuildable = createAgentXLicenseGate({ api: {} });
+  assert.equal(await unbuildable.refusal(), null, 'no extension API: fail open');
+  assert.equal(isLicenseRefusalError(new Error('x')), false);
 });
 
-test('only the Chrome background gates bridge runs on the license, and forwards the refusal', async () => {
+test('the license gate hears every recorded license answer, and nothing else', async () => {
+  const fake = createApi({});
+  const gate = createAgentXLicenseGate({ api: fake.api, service: { licenseRunRefusal: async () => null } });
+  let heard = 0;
+  const off = gate.onLicenseRecorded(() => { heard += 1; });
+  fake.storageChanged.emit({ [AGENTX_LICENSE_STORAGE_KEY]: { newValue: {} } }, 'local');
+  fake.storageChanged.emit({ [AGENTX_SESSION_STORAGE_KEY]: { newValue: {} } }, 'local');
+  fake.storageChanged.emit({ [AGENTX_LICENSE_STATE_STORAGE_KEY]: { newValue: {} } }, 'local');
+  fake.storageChanged.emit({ [AGENTX_LICENSE_STORAGE_KEY]: { newValue: {} } }, 'sync');
+  assert.equal(heard, 1, 'only the license record, only local storage');
+  // A listener that throws cannot break the next one.
+  gate.onLicenseRecorded(() => { throw new Error('listener bug'); });
+  let after = 0;
+  gate.onLicenseRecorded(() => { after += 1; });
+  fake.storageChanged.emit({ [AGENTX_LICENSE_STORAGE_KEY]: { newValue: {} } }, 'local');
+  assert.equal(after, 1);
+  off();
+  fake.storageChanged.emit({ [AGENTX_LICENSE_STORAGE_KEY]: { newValue: {} } }, 'local');
+  assert.equal(heard, 2, 'unsubscribed after the second answer');
+});
+
+// ─── License and scheduled jobs (the patched schedulers of both builds) ───
+
+const SCHEDULERS = await Promise.all(['chrome', 'firefox'].map(async (target) => [
+  target,
+  await import(pathToFileURL(path.join(ROOT, 'brand-dist', target, 'src/agent/scheduler.js')).href),
+]));
+
+const READ_ONLY_REFUSAL = Object.freeze({
+  status: 403,
+  code: 'license_read_only',
+  message: 'Gói Pilot nội bộ 2026 đã hết hạn ngày 31/12/2026. Liên hệ it@astralx.com.vn để được cấp lại hoặc gia hạn.',
+  license: { state: 'expired', access: 'read_only' },
+});
+
+/** A ScheduledJobManager over in-memory storage, alarms and tabs; `gate` is what runGate answers now. */
+function licensedScheduler(SchedulerMod, { gate = () => null, processMessage, assertRunStartAllowed } = {}) {
+  const store = {};
+  const alarms = new Map();
+  const updates = [];
+  const runs = [];
+  let currentNow = Date.UTC(2026, 11, 1, 2, 30, 0);
+  const tabs = new Map([[77, { id: 77, url: 'https://example.com/', title: 'Example' }]]);
+  let nextTabId = 100;
+  const api = {
+    storage: {
+      local: {
+        async get(keys) {
+          const names = Array.isArray(keys) ? keys : [keys];
+          return Object.fromEntries(names.filter((key) => key in store).map((key) => [key, structuredClone(store[key])]));
+        },
+        async set(values) { Object.assign(store, structuredClone(values)); },
+      },
+    },
+    alarms: {
+      async create(name, spec) { alarms.set(name, spec); },
+      async clear(name) { return alarms.delete(name); },
+      onAlarm: { addListener() {} },
+    },
+    tabs: {
+      async get(tabId) {
+        if (!tabs.has(tabId)) throw new Error(`No tab ${tabId}`);
+        return tabs.get(tabId);
+      },
+      async update(tabId, changes) { const tab = { ...tabs.get(tabId), ...changes }; tabs.set(tabId, tab); return tab; },
+      async create({ url, active }) { const tab = { id: nextTabId++, url, active: !!active }; tabs.set(tab.id, tab); return tab; },
+      async remove(tabId) { tabs.delete(tabId); },
+    },
+  };
+  const agent = {
+    isRunning: () => false,
+    getConversationId: async () => 'conv-1',
+    requireExplicitClarificationAuthorization: async () => {},
+    assertRunStartAllowed: assertRunStartAllowed || (async () => {}),
+    processMessage: async (...args) => {
+      runs.push(args[1]);
+      if (processMessage) return processMessage(...args);
+      args[2]('tool_result', { name: 'done', result: { done: true, summary: 'Done.', outcome: 'success' } });
+      return 'Done.';
+    },
+    abort: () => {},
+    setScheduledRunPolicy: () => {},
+    clearScheduledRunPolicy: () => {},
+  };
+  const manager = new SchedulerMod.ScheduledJobManager({
+    api,
+    agent,
+    loadProviders: async () => {},
+    sendUpdate(tabId, type, data) { updates.push({ tabId, type, data }); },
+    now: () => currentNow,
+    runGate: async () => gate(),
+  });
+  return {
+    manager,
+    alarms,
+    updates,
+    runs,
+    jobs: () => store[SchedulerMod.SCHEDULED_JOBS_KEY] || [],
+    now: () => currentNow,
+    advance: (ms) => { currentNow += ms; },
+    alarmName: (jobId) => `${SchedulerMod.SCHEDULED_ALARM_PREFIX}${jobId}`,
+  };
+}
+
+async function taskJob(h) {
+  const created = await h.manager.createTaskJob({
+    tabId: 77,
+    conversationId: 'conv-1',
+    args: {
+      title: 'Morning report',
+      prompt: 'Read the report on this page.',
+      schedule: { type: 'once', after_seconds: 0 },
+      target: { type: 'current_tab' },
+    },
+    currentUrl: 'https://example.com/',
+    currentTitle: 'Example',
+  });
+  assert.ok(created.jobId, JSON.stringify(created));
+  return created.jobId;
+}
+
+test('a read-only license holds scheduled and watch jobs — queued, quiet, never failed — and they resume', async () => {
+  for (const [target, SchedulerMod] of SCHEDULERS) {
+    let gate = () => READ_ONLY_REFUSAL;
+    const h = licensedScheduler(SchedulerMod, { gate: () => gate() });
+    const jobId = await taskJob(h);
+    await h.manager.handleAlarm(h.alarmName(jobId));
+    let job = h.jobs().find((entry) => entry.id === jobId);
+    assert.equal(job.status, 'queued', target);
+    assert.equal(job.heldBy, 'license_read_only', target);
+    assert.equal(job.lastError, READ_ONLY_REFUSAL.message, target);
+    assert.equal(job.nextRunAt, new Date(h.now() + SchedulerMod.RUN_GATE_RETRY_MS).toISOString(), target);
+    assert.equal(h.alarms.get(h.alarmName(jobId)).when, h.now() + SchedulerMod.RUN_GATE_RETRY_MS, target);
+    assert.deepEqual(h.runs, [], `${target}: no AI ran`);
+    const queuedEvents = () => h.updates.filter((update) => update.data?.event === 'queued').length;
+    assert.equal(queuedEvents(), 1, `${target}: the panel hears it once`);
+    // Listings (the panel's job list, the bridge's cloud_scheduled_jobs) say why it waits.
+    const [listed] = await h.manager.listJobs();
+    assert.equal(listed.status, 'queued', target);
+    assert.equal(listed.heldBy, 'license_read_only', target);
+    assert.equal(listed.lastError, READ_ONLY_REFUSAL.message, target);
+
+    // Hours of retries: still waiting, still quiet, never failed by the deferral cap.
+    for (let i = 0; i < SchedulerMod.MAX_QUEUE_DEFERRALS + 10; i++) {
+      h.advance(SchedulerMod.RUN_GATE_RETRY_MS);
+      await h.manager.handleAlarm(h.alarmName(jobId));
+    }
+    job = h.jobs().find((entry) => entry.id === jobId);
+    assert.equal(job.status, 'queued', `${target}: never failed`);
+    assert.equal(Number(job.queueDeferrals || 0), 0, `${target}: holds are not deferrals`);
+    assert.equal(queuedEvents(), 1, `${target}: no event per retry`);
+    assert.equal(h.updates.some((update) => update.data?.event === 'failed'), false, target);
+
+    // The license is renewed: a license answer releases the job at once.
+    gate = () => null;
+    await h.manager.retryHeldJobs();
+    assert.equal(h.alarms.get(h.alarmName(jobId)).when, h.now(), `${target}: due now`);
+    await h.manager.handleAlarm(h.alarmName(jobId));
+    job = h.jobs().find((entry) => entry.id === jobId);
+    assert.equal(h.runs.length, 1, `${target}: it ran once`);
+    assert.match(h.runs[0], /Read the report on this page\./, target);
+    assert.equal(job.heldBy, null, `${target}: no longer held`);
+    assert.equal((await h.manager.listJobs())[0].heldBy, null, target);
+    assert.notEqual(job.status, 'queued', target);
+    assert.notEqual(job.status, 'failed', target);
+  }
+});
+
+test('a watch waits on the license without spending its failure budget', async () => {
+  for (const [target, SchedulerMod] of SCHEDULERS) {
+    let gate = () => READ_ONLY_REFUSAL;
+    const h = licensedScheduler(SchedulerMod, { gate: () => gate() });
+    const created = await h.manager.createWatchJob({
+      args: { prompt: 'When a new release appears, summarize it.', keep: true, interval_seconds: 60 },
+      currentUrl: 'https://example.com/',
+      currentTitle: 'Example',
+    });
+    for (let i = 0; i < SchedulerMod.MAX_WATCH_CONSECUTIVE_FAILURES + 2; i++) {
+      await h.manager.handleAlarm(h.alarmName(created.jobId));
+      h.advance(SchedulerMod.RUN_GATE_RETRY_MS);
+    }
+    let job = h.jobs().find((entry) => entry.id === created.jobId);
+    assert.equal(job.status, 'queued', target);
+    assert.equal(job.heldBy, 'license_read_only', target);
+    assert.equal(Number(job.watch?.consecutiveFailures || 0), 0, `${target}: waiting is not failing`);
+    assert.deepEqual(h.runs, [], target);
+    gate = () => null;
+    await h.manager.retryHeldJobs();
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    job = h.jobs().find((entry) => entry.id === created.jobId);
+    assert.equal(h.runs.length, 1, `${target}: the watch polls again`);
+    assert.equal(job.heldBy, null, target);
+  }
+});
+
+test('a run-start refusal holds the job; a run that failed halfway still fails; a broken gate stops nothing', async () => {
+  for (const [target, SchedulerMod] of SCHEDULERS) {
+    // The gate was open at the first look and closed by the time the run-start
+    // guard asked (the license went read-only in between).
+    let closed = false;
+    const licenseError = () => Object.assign(new Error(READ_ONLY_REFUSAL.message), {
+      code: READ_ONLY_REFUSAL.code, status: 403, license: READ_ONLY_REFUSAL.license,
+    });
+    const raced = licensedScheduler(SchedulerMod, {
+      gate: () => (closed ? READ_ONLY_REFUSAL : null),
+      assertRunStartAllowed: async () => { closed = true; throw licenseError(); },
+    });
+    const racedJob = await taskJob(raced);
+    await raced.manager.handleAlarm(raced.alarmName(racedJob));
+    assert.equal(raced.jobs()[0].status, 'queued', `${target}: guard refusal before the tab is reserved`);
+    assert.equal(raced.jobs()[0].heldBy, 'license_read_only', target);
+
+    // The same refusal from inside processMessage (its run-entry claim).
+    let inside = false;
+    const claimed = licensedScheduler(SchedulerMod, {
+      gate: () => (inside ? READ_ONLY_REFUSAL : null),
+      processMessage: async () => { inside = true; throw licenseError(); },
+    });
+    const claimedJob = await taskJob(claimed);
+    await claimed.manager.handleAlarm(claimed.alarmName(claimedJob));
+    assert.equal(claimed.jobs()[0].status, 'queued', `${target}: refused at the run claim, before any step`);
+    assert.equal(claimed.updates.some((update) => update.data?.event === 'failed'), false, target);
+
+    // A run that failed for another reason (the gateway blocked the key mid-run)
+    // is a failed job, even though the gate refuses now: re-running a half-done
+    // task could repeat what it already did.
+    let halfway = false;
+    const failed = licensedScheduler(SchedulerMod, {
+      gate: () => (halfway ? READ_ONLY_REFUSAL : null),
+      processMessage: async () => { halfway = true; throw new Error('401 key blocked'); },
+    });
+    const failedJob = await taskJob(failed);
+    await failed.manager.handleAlarm(failed.alarmName(failedJob));
+    assert.equal(failed.jobs()[0].status, 'failed', target);
+    assert.equal(failed.jobs()[0].lastError, '401 key blocked', target);
+
+    // A gate that throws, or answers nonsense, lets the job run.
+    for (const gate of [() => { throw new Error('license service bug'); }, () => ({ code: 'x' }), () => 'refuse']) {
+      const h = licensedScheduler(SchedulerMod, { gate });
+      const jobId = await taskJob(h);
+      await h.manager.handleAlarm(h.alarmName(jobId));
+      assert.equal(h.runs.length, 1, `${target}: ${String(gate)}`);
+    }
+  }
+});
+
+/**
+ * A fresh copy of the built Chrome recorder host over a fake `chrome`: a
+ * recording in progress with "transcribe after" on, the offscreen recorder
+ * answering stop and the chunked data fetch, downloads completing at once.
+ */
+async function recorderHarness(label) {
+  const broadcasts = [];
+  const dataUrl = `data:audio/webm;base64,${Buffer.from('fake-webm-bytes').toString('base64')}`;
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = {
+    storage: {
+      session: {
+        async get() {
+          return { recordingState: { active: true, transcribeAfter: true, filename: 'meeting.webm', recordingId: 'rec-1', tabId: 5, source: 'tab', startedAt: Date.now() } };
+        },
+        async set() {},
+      },
+    },
+    alarms: { create() {}, clear: async () => true, onAlarm: { addListener() {} } },
+    tabs: { query(_query, callback) { callback?.([]); } },
+    downloads: {
+      async download() { return 7; },
+      async search() { return [{ id: 7, state: 'complete', filename: '/tmp/meeting.webm' }]; },
+    },
+    runtime: {
+      async sendMessage(message) {
+        if (message?.type === 'recorder-stop') {
+          return { ok: true, dataUrlLength: dataUrl.length, sizeBytes: 15, durationMs: 1000, mimeType: 'audio/webm' };
+        }
+        if (message?.type === 'recorder-get-data-chunk') {
+          return { ok: true, data: dataUrl.slice(message.offset, message.offset + message.length), total: dataUrl.length };
+        }
+        if (message?.action === 'recording_update') broadcasts.push(message);
+        return {};
+      },
+    },
+  };
+  const host = await import(`${pathToFileURL(path.join(CHROME_ROOT, 'src/recorder/host.js')).href}?case=${label}`);
+  return {
+    host,
+    broadcasts,
+    events: () => broadcasts.map((message) => message.event),
+    transcribed: () => broadcasts.find((message) => message.event === 'transcribed')?.result || null,
+    restore: () => { globalThis.chrome = previousChrome; },
+  };
+}
+
+test('Tab Recorder keeps the recording but sends nothing to a model while the license is read-only', async () => {
+  const refused = await recorderHarness('refused');
+  const fetches = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => { fetches.push(String(args[0]).slice(0, 30)); return realFetch(...args); };
+  try {
+    refused.host.setProviderManager({ providers: new Map([['openai', {}]]), load: async () => {} });
+    refused.host.setTranscriptionGate(async () => READ_ONLY_REFUSAL);
+    const saved = await refused.host.stopTabRecording();
+    assert.equal(saved.ok, true, 'the recording is saved');
+    assert.equal(saved.filename, '/tmp/meeting.webm');
+    await until(() => refused.transcribed(), 'the transcription verdict');
+    assert.deepEqual(refused.transcribed(), { ok: false, error: READ_ONLY_REFUSAL.message, code: 'license_read_only' });
+    assert.equal(refused.events().includes('transcribing'), false, 'never says it is transcribing');
+    assert.deepEqual(fetches, [], 'not even the recording bytes are read for a model');
+  } finally {
+    globalThis.fetch = realFetch;
+    refused.restore();
+  }
+
+  // With the gate open (or failing) transcription goes ahead exactly as before.
+  for (const [label, gate] of [['open', async () => null], ['broken', async () => { throw new Error('gate bug'); }]]) {
+    const allowed = await recorderHarness(label);
+    try {
+      allowed.host.setProviderManager({ providers: new Map(), load: async () => {} });
+      allowed.host.setTranscriptionGate(gate);
+      await allowed.host.stopTabRecording();
+      await until(() => allowed.transcribed(), 'the transcription verdict');
+      assert.equal(allowed.events().includes('transcribing'), true, label);
+      assert.notEqual(allowed.transcribed().code, 'license_read_only', label);
+    } finally {
+      allowed.restore();
+    }
+  }
+});
+
+test('both backgrounds put the license in front of every AI entry point', async () => {
+  for (const target of ['chrome', 'firefox']) {
+    const background = await fs.readFile(path.join(ROOT, 'brand-dist', target, 'src/background.js'), 'utf8');
+    const api = target === 'chrome' ? 'chrome' : 'browser';
+    assert.match(background, /import \{ createAgentXLicenseGate \} from '\.\/agentx\/license-gate\.js';/, target);
+    assert.match(background, new RegExp(`const agentxLicense = createAgentXLicenseGate\\(\\{ api: ${api}, locale: \\(\\) => selectionShortcutLocale \\}\\);`), target);
+    // Every agent run: chat, streaming, continuations, replays, scheduled and bridge runs.
+    assert.match(background, /agent\.setRunStartGuard\(async \(tabId\) => \{\n  await teacherRunInterlock\.guardRunStart\(tabId\);\n  await agentxLicense\.assertAllowed\(\);\n\}\);/, target);
+    assert.doesNotMatch(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\);/, target);
+    // Scheduled and watch jobs are held, and released when a license answer lands.
+    assert.match(background, /runGate: agentxLicense\.userRefusal,\n\}\);\nagent\.setScheduler\(scheduler\);/, target);
+    assert.match(background, /agentxLicense\.onLicenseRecorded\(\(\) => \{\n  scheduler\.retryHeldJobs\(\)\.catch\(\(\) => \{\}\);\n  scheduleUserMemoryExtractionDrain\(0\);\n\}\);/, target);
+    // Memory extraction waits in its queue.
+    assert.match(background, /if \(await agentxLicense\.refusal\(\)\) return;\n\n      try \{\n        await customSkillsReady;/, target);
+    // Compaction and the three connection tests.
+    assert.match(background, /case 'compact_conversation': \{[\s\S]{0,400}await agentxLicense\.assertAllowed\(\);\n      return \{ ok: true, \.\.\.\(await agent\.compactConversation\(tabId\)\) \};/, target);
+    for (const [action, call] of [
+      ['test_provider', 'testProvider\\(msg\\.providerId\\)'],
+      ['test_vision_provider', 'testVisionProvider\\(\\)'],
+      ['test_transcription_provider', 'testTranscriptionProvider\\(\\)'],
+    ]) {
+      assert.match(
+        background,
+        new RegExp(`case '${action}': \\{\\n[^\\n]*\\n      const licenseRefusal = await agentxLicense\\.userRefusal\\(\\);\\n      if \\(licenseRefusal\\) return \\{ ok: false, error: licenseRefusal\\.message, code: licenseRefusal\\.code \\};\\n      return await providerManager\\.${call};`),
+        `${target}: ${action}`,
+      );
+    }
+  }
   const chromeBackground = await fs.readFile(path.join(CHROME_ROOT, 'src/background.js'), 'utf8');
-  assert.match(chromeBackground, /import \{ createAgentXLicenseRunGate \} from '\.\/agentx\/license-run-gate\.js';/);
-  assert.match(chromeBackground, /runGate: createAgentXLicenseRunGate\(\{ api: chrome \}\)/);
+  // Chrome only: transcription and the Workmate bridge.
+  assert.match(chromeBackground, /setRecorderTranscriptionGate\(agentxLicense\.userRefusal\);/);
+  assert.match(chromeBackground, /runGate: agentxLicense\.refusal,\n\}\);\nalwaysAllowApiMutationsReady/);
   assert.match(chromeBackground, /typeof e\.code === 'string' && e\.code \? \{ code: e\.code \} : \{\}/);
   assert.match(chromeBackground, /e\.license && typeof e\.license === 'object' \? \{ license: e\.license \} : \{\}/);
   const firefoxBackground = await fs.readFile(path.join(ROOT, 'brand-dist/firefox/src/background.js'), 'utf8');
-  assert.doesNotMatch(firefoxBackground, /runGate|license-run-gate/, 'Firefox has no cloud bridge to gate');
+  assert.doesNotMatch(firefoxBackground, /setRecorderTranscriptionGate|runGate: agentxLicense\.refusal/, 'Firefox has no recorder and no bridge');
+  for (const target of ['chrome', 'firefox']) {
+    const scheduler = await fs.readFile(path.join(ROOT, 'brand-dist', target, 'src/agent/scheduler.js'), 'utf8');
+    assert.match(scheduler, /export const RUN_GATE_RETRY_MS = 5 \* 60 \* 1000;/, target);
+  }
 });
 
 let failed = 0;

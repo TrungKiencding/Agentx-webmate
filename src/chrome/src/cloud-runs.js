@@ -742,6 +742,8 @@ export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
     scheduledAt: job.scheduledAt,
     nextRunAt: job.nextRunAt || job.scheduledAt,
     lastOutcome: job.lastOutcome || null,
+    // A queued job the embedder's run gate holds says so (e.g. 'license_read_only').
+    heldBy: job.heldBy || null,
     needsUserInput: job.needsUserInput === true,
     clarificationRequired: job.clarificationRequired === true,
     completedAt: job.completedAt || null,

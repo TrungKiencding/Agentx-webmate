@@ -430,7 +430,7 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/run-reconnect.js').replace(/\\/g, '/')
 );
-const { buildCloudPersistenceRows, createCloudRunController, normalizeCloudBridgeUrl } = await import(
+const { buildCloudPersistenceRows, cloudSafeScheduledJob, createCloudRunController, normalizeCloudBridgeUrl } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/cloud-runs.js').replace(/\\/g, '/')
 );
 const {
@@ -19238,6 +19238,16 @@ test('a run waiting on the gate counts as busy, and an update drain armed meanwh
   await next;
   await settle();
   assert.deepEqual(seen, ['']);
+});
+
+test('a strict-mode bridge job summary still says what a queued job waits for', () => {
+  const held = cloudSafeScheduledJob({
+    id: 'job_1', kind: 'task', source: 'user', status: 'queued', heldBy: 'license_read_only',
+    lastError: 'private reason', scheduledAt: '2026-12-01T00:00:00.000Z',
+  }, { strictSecretMode: true });
+  assert.equal(held.heldBy, 'license_read_only');
+  assert.equal(held.lastError, undefined, 'strict mode still drops free text');
+  assert.equal(cloudSafeScheduledJob({ id: 'job_2', status: 'pending' }, { strictSecretMode: true }).heldBy, null);
 });
 
 test('offscreen cloud bridge passes a refusal code and license on to the server', async () => {

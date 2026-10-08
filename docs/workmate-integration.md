@@ -335,9 +335,29 @@ What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
   lasts; `expiring` shows a dismissible reminder once per (plan, last day,
   reminder threshold). Settings → Providers shows plan, state, last day and
   contact in the account card whenever a license is known, enforced or not.
+- **No AI at all while read-only, whichever provider would answer** — the
+  managed gateway or one the person configured with their own key. One gate
+  in the background (`agentx/license-gate.js`, wired by brand patch
+  `091-agentx-license-gate.patch` into `background.js`, `agent/scheduler.js`
+  and, on Chrome, `recorder/host.js`) stands in front of every way in:
+
+  | Entry point | While read-only |
+  |---|---|
+  | Every agent run — side-panel chat and streaming, "continue", saved-workflow replays, prompts queued by the context menu and the selection shortcut, scheduled and bridge runs | The agent's run-start guard refuses before any step (code `license_read_only`, the panel's own wording). |
+  | Scheduled tasks, watches, resume jobs (`chrome.alarms` / `browser.alarms`) | **Held, not failed:** `queued` with `heldBy: "license_read_only"`, asked again every five minutes and at once whenever a license answer is recorded, never counted against the queue-deferral cap or a watch's failure budget; the panel hears it once. They run as soon as the license allows AI again. A refusal at the run-start guard (the license changed in between) is held the same way; a run that failed halfway is still a failed job, so nothing half-done is repeated. |
+  | User-memory extraction after a turn | Stays queued; drained when a license answer allows AI again. |
+  | Conversation compaction (`/compact`) | Refused with the license reason. |
+  | Settings connection tests (provider, vision, transcription) | Answer the license reason instead of calling the model. |
+  | Tab Recorder transcription (Chrome) | The recording is saved; the transcription answers the license reason without reading the audio. |
+  | Workmate-driven bridge runs (Chrome) | Refused before anything happens — see below. |
+
+  Not AI, so untouched: model lists, context-window and vision-capability
+  metadata, the gateway key probe, the Skill Hub sync. The gate fails open —
+  no session, no license known, a license service that is down — exactly
+  like everything else here; the gateway blocking the key stays the hard
+  stop.
 - **Workmate-driven runs are refused while read-only.** Chrome's background
-  passes `cloud-runs.js` a `runGate` (brand patch
-  `091-agentx-license-run-gate.patch`) that answers from the last known
+  passes `cloud-runs.js` a `runGate` that answers from the last known
   license — re-checked first when it says read-only, so a renewal is not
   refused on an old answer; a full or unknown license lets the run start at
   once and is re-checked behind it. The background never refreshes the
@@ -352,11 +372,11 @@ What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
     "license": { "state": "expired", "access": "read_only", … } }
   ```
 
-  and the MCP server turns it into a failing tool result whose text starts
-  with `license_read_only: ` and whose `structuredContent` is `{ code:
-  "license_read_only", message, license }`, on a relayed copy too. Nothing
-  else starts: no tab is brought forward, no run is recorded. Firefox has no
-  bridge, so nothing to refuse there.
+  and the MCP server (1.4.0 and later) turns it into a failing tool result
+  whose text starts with `license_read_only: ` and whose `structuredContent`
+  is `{ code: "license_read_only", message, license }`, on a relayed copy too.
+  Nothing else starts: no tab is brought forward, no run is recorded. Firefox
+  has no bridge, so nothing to refuse there.
 
 ## Developer checkout
 
