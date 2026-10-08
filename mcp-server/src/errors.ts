@@ -36,24 +36,72 @@ export function isWebmateErrorCode(value: unknown): value is WebmateErrorCode {
 }
 
 /**
+ * Refusals the extension itself answers with a code of its own: a state of
+ * the person's account, not of the WebMate plumbing, so they sit outside the
+ * WEBMATE_* set above. A failing tool result leads with the code and repeats
+ * it as `structuredContent.code`, exactly as the extension spelled it.
+ *
+ *   license_read_only  the AgentX license of the account signed in to the
+ *                      extension is read-only (no license, not started yet,
+ *                      expired or revoked). Retrying does not help until it
+ *                      changes; the license object rides along as
+ *                      `structuredContent.license` so Workmate can say why.
+ */
+export const EXTENSION_REFUSAL_CODES = ["license_read_only"] as const;
+
+export type ExtensionRefusalCode = (typeof EXTENSION_REFUSAL_CODES)[number];
+
+export function isExtensionRefusalCode(value: unknown): value is ExtensionRefusalCode {
+  return typeof value === "string" && (EXTENSION_REFUSAL_CODES as readonly string[]).includes(value);
+}
+
+/** An extension refusal and what it carried. */
+export interface ExtensionRefusal {
+  code: ExtensionRefusalCode;
+  /** The AgentX license object (`license_read_only`), passed on untouched. */
+  license?: Record<string, unknown>;
+}
+
+/**
+ * The refusal a failure frame carries — the extension's `{ ok: false, error,
+ * status, code, license }`, or its relayed form — or undefined. Unknown codes
+ * are dropped rather than trusted.
+ */
+export function refusalFrom(frame: unknown): ExtensionRefusal | undefined {
+  if (!frame || typeof frame !== "object") return undefined;
+  const raw = frame as Record<string, unknown>;
+  if (!isExtensionRefusalCode(raw.code)) return undefined;
+  const license =
+    raw.license && typeof raw.license === "object" && !Array.isArray(raw.license)
+      ? (raw.license as Record<string, unknown>)
+      : undefined;
+  return { code: raw.code, ...(license ? { license } : {}) };
+}
+
+/**
  * A failed bridge command. `code` says whether the command reached the
- * extension at all; `webmateCode` is the structured code Workmate reacts to.
+ * extension at all; `webmateCode` is the structured code Workmate reacts to;
+ * `refusal` is the extension's own reason, when it gave one.
  */
 export class BridgeError extends Error {
   readonly status?: number;
   readonly code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
   /** Structured code Workmate reacts to (see WEBMATE_ERROR_CODES). */
   readonly webmateCode?: WebmateErrorCode;
+  /** The extension refused for a reason of its own (see EXTENSION_REFUSAL_CODES). */
+  readonly refusal?: ExtensionRefusal;
   constructor(
     message: string,
     status?: number,
     code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED",
     webmateCode?: WebmateErrorCode,
+    refusal?: ExtensionRefusal,
   ) {
     super(message);
     this.name = "BridgeError";
     this.status = status;
     this.code = code;
     this.webmateCode = webmateCode;
+    this.refusal = refusal;
   }
 }

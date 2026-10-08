@@ -25,7 +25,7 @@
  *   owner -> standby   {type:'state', state}                          after every bridge change
  *   standby -> owner   {type:'relay', id, action, payload, timeoutMs, target}
  *   owner -> standby   {type:'relay_result', id, ok:true, result}
- *                      {type:'relay_result', id, ok:false, error:{message, status?, code?, webmateCode?, retry?}}
+ *                      {type:'relay_result', id, ok:false, error:{message, status?, code?, webmateCode?, refusal?, retry?}}
  *   owner -> standby   {type:'yield'}                                  the port is yours: bind it
  *   standby -> owner   {type:'bound'} | {type:'bind_failed'}
  *
@@ -41,7 +41,13 @@ import { timingSafeEqual } from "node:crypto";
 import WebSocket from "ws";
 
 import type { ConnectionSummary, ExtensionInfo, RequestTarget } from "./bridge.js";
-import { BridgeError, isWebmateErrorCode, type WebmateErrorCode } from "./errors.js";
+import {
+  BridgeError,
+  isWebmateErrorCode,
+  refusalFrom,
+  type ExtensionRefusal,
+  type WebmateErrorCode,
+} from "./errors.js";
 
 export const PEER_PATH = "/peer";
 
@@ -86,6 +92,8 @@ export interface WireError {
   status?: number;
   code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
   webmateCode?: WebmateErrorCode;
+  /** The extension's own refusal (license_read_only and its license); older peers ignore it. */
+  refusal?: ExtensionRefusal;
   /** The owner refused before sending anything to the extension: resend once the route settles. */
   retry?: boolean;
 }
@@ -184,6 +192,7 @@ export function errorToWire(error: unknown): WireError {
       ...(error.status !== undefined ? { status: error.status } : {}),
       ...(error.code ? { code: error.code } : {}),
       ...(error.webmateCode ? { webmateCode: error.webmateCode } : {}),
+      ...(error.refusal ? { refusal: error.refusal } : {}),
     };
   }
   return { message: error instanceof Error ? error.message : String(error) };
@@ -195,7 +204,7 @@ export function errorFromWire(raw: unknown): BridgeError {
   if (r.retry === true) return new RelayRetryError(message);
   const code = r.code === "COMMAND_TIMEOUT" || r.code === "COMMAND_INTERRUPTED" ? r.code : undefined;
   const webmateCode = isWebmateErrorCode(r.webmateCode) ? r.webmateCode : undefined;
-  return new BridgeError(message, int(r.status) ?? undefined, code, webmateCode);
+  return new BridgeError(message, int(r.status) ?? undefined, code, webmateCode, refusalFrom(r.refusal));
 }
 
 /** How a standby's attempt to reach the port holder ended. */

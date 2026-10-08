@@ -106,7 +106,10 @@ Statuses: `running`, `needs_user_input`, `completed`, `failed`, `aborted`.
 1. **Check the connection once per session.** Call `{{tool:connection}}`. If it
    says *Not connected*, relay its instructions to the user verbatim (open
    Chrome, enable the Cloud bridge on port 17374) and stop. Do not retry the
-   task in a loop.
+   task in a loop. A tool that fails with `license_read_only` means the AgentX
+   license of the account signed in to the extension is read-only: tell the
+   user what the message says (why, and whom to contact) and stop — retrying
+   does not help until the license changes.
 2. **Pick the mode from the verb in the task.** `mode="ask"` reads, extracts
    and summarises the page that is already open; it cannot navigate, click,
    type or submit. Use `mode="act"` the moment the task opens a site, searches
