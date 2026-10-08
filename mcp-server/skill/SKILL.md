@@ -3,7 +3,7 @@ name: {{skillName}}
 description: Delegate browser tasks to the signed-in {{productName}} — read, extract or act on pages in the user's own Chrome through the `{{skillName}}` MCP server bundled in this skill. Use when a task needs a page behind the user's login (SSO dashboards, webmail, admin panels, internal tools), or when the user says "in my browser", "my account", or asks to open a site for them.
 license: MIT
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   author: AstralX Technology
   hermes:
     tags: [Browser, {{shortName}}, MCP, Delegation, Signed-In-Session, SSO, Webmail, Dashboards]

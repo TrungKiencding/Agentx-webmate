@@ -2,7 +2,7 @@
   "name": "agentx-webmate-mcp",
   "displayName": "AgentX WebMate MCP Server",
   "description": "Model Context Protocol server that lets AgentX Workmate \u2014 or any MCP client (Claude Code, Codex, Cursor) \u2014 delegate browser tasks to a running AgentX WebMate extension, in the user's real, already-authenticated browser session.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
