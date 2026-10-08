@@ -16,6 +16,7 @@ const TRANSCRIBE_PATH = path.join(CHROME_ROOT, 'src/agent/transcribe.js');
 const MODELS_PATH = path.join(CHROME_ROOT, 'src/agentx/cloud-models.js');
 const LICENSE_PATH = path.join(CHROME_ROOT, 'src/agentx/license.js');
 const LICENSE_COPY_PATH = path.join(CHROME_ROOT, 'src/ui/agentx-license-copy.js');
+const LICENSE_RUN_GATE_PATH = path.join(CHROME_ROOT, 'src/agentx/license-run-gate.js');
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
@@ -42,6 +43,7 @@ const {
   licenseReinstateSentence,
   licenseStateLabel,
 } = await import(pathToFileURL(LICENSE_COPY_PATH).href);
+const { createAgentXLicenseRunGate } = await import(pathToFileURL(LICENSE_RUN_GATE_PATH).href);
 const { createAgentXCloudSettingsController } = await import(pathToFileURL(CONTROLLER_PATH).href);
 const { createAgentXLoginGate } = await import(pathToFileURL(GATE_PATH).href);
 const { createWorkmateAuth, LOGIN_REQUIRED_HOLDOFF_MS } = await import(pathToFileURL(WORKMATE_AUTH_PATH).href);
@@ -2826,6 +2828,31 @@ test('both branded targets carry the license banner under the panel header', asy
     const css = await fs.readFile(path.join(root, 'src/ui/agentx-login-gate.css'), 'utf8');
     assert.match(css, /\.agentx-license-banner\.hidden/);
   }
+});
+
+// ─── License and Workmate-driven runs ─────────────────────────────────────
+
+test('the background run gate asks the license service and fails open', async () => {
+  const refusal = { status: 403, code: 'license_read_only', message: 'read-only', license: { access: 'read_only' } };
+  const asked = [];
+  const gate = createAgentXLicenseRunGate({ api: {}, service: { licenseRunRefusal: async () => { asked.push(1); return refusal; } } });
+  assert.equal(await gate(), refusal);
+  assert.equal(asked.length, 1);
+  // A service that throws, or cannot even be built: the run is not the gate's to stop.
+  const broken = createAgentXLicenseRunGate({ api: {}, service: { licenseRunRefusal: async () => { throw new Error('boom'); } } });
+  assert.equal(await broken(), null);
+  const unbuildable = createAgentXLicenseRunGate({ api: {} });
+  assert.equal(await unbuildable(), null, 'no extension API: fail open');
+});
+
+test('only the Chrome background gates bridge runs on the license, and forwards the refusal', async () => {
+  const chromeBackground = await fs.readFile(path.join(CHROME_ROOT, 'src/background.js'), 'utf8');
+  assert.match(chromeBackground, /import \{ createAgentXLicenseRunGate \} from '\.\/agentx\/license-run-gate\.js';/);
+  assert.match(chromeBackground, /runGate: createAgentXLicenseRunGate\(\{ api: chrome \}\)/);
+  assert.match(chromeBackground, /typeof e\.code === 'string' && e\.code \? \{ code: e\.code \} : \{\}/);
+  assert.match(chromeBackground, /e\.license && typeof e\.license === 'object' \? \{ license: e\.license \} : \{\}/);
+  const firefoxBackground = await fs.readFile(path.join(ROOT, 'brand-dist/firefox/src/background.js'), 'utf8');
+  assert.doesNotMatch(firefoxBackground, /runGate|license-run-gate/, 'Firefox has no cloud bridge to gate');
 });
 
 let failed = 0;

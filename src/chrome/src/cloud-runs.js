@@ -62,8 +62,36 @@ const SENSITIVE_URL_PATH_LABELS = new Set([
   'credential', 'password', 'passcode', 'otp', 'downloadkey', 'sharetoken',
 ]);
 
-function cloudRunError(message, status) {
-  return Object.assign(new Error(message), { status });
+function cloudRunError(message, status, extra = {}) {
+  return Object.assign(new Error(message), { status }, extra);
+}
+
+/**
+ * Asks the embedder's run gate whether a run may start; a refusal comes back
+ * as the error to throw. The gate is the brand's policy (AgentX: a read-only
+ * license refuses with code `license_read_only` and the license itself, which
+ * the background passes on to the bridge so Workmate can say why). It is
+ * advisory plumbing, never a new way to fail: a gate that throws, or answers
+ * something that is not a refusal, lets the run start.
+ */
+async function runGateRefusal(runGate) {
+  if (typeof runGate !== 'function') return null;
+  let verdict;
+  try {
+    verdict = await runGate();
+  } catch {
+    return null;
+  }
+  if (!verdict || typeof verdict !== 'object') return null;
+  const message = String(verdict.message || '').trim();
+  if (!message) return null;
+  const status = Number.isInteger(verdict.status) && verdict.status >= 400 && verdict.status < 600
+    ? verdict.status
+    : 403;
+  return cloudRunError(message, status, {
+    ...(typeof verdict.code === 'string' && verdict.code ? { code: verdict.code } : {}),
+    ...(verdict.license && typeof verdict.license === 'object' ? { license: verdict.license } : {}),
+  });
 }
 
 export function normalizeCloudRunMode(value, fallback = 'act') {
@@ -790,6 +818,9 @@ export function createCloudRunController({
   now = () => new Date(),
   makeRunId = () => `run_${globalThis.crypto.randomUUID()}`,
   fetchImpl = (...args) => globalThis.fetch(...args),
+  // async () => null | { message, status?, code?, license? }: a refusal stops
+  // the run before anything happens in the browser (see runGateRefusal).
+  runGate = null,
 } = {}) {
   const api = chromeApi;
   const runs = new Map();
@@ -1127,8 +1158,12 @@ export function createCloudRunController({
         throw cloudRunError('Parent cloud run is no longer available and has no saved tab.', 409);
       }
     }
-    // Both refusals come before resolveTabId: a run that cannot start must not
-    // first activate — and possibly open — a tab in front of the user.
+    // Every refusal comes before resolveTabId: a run that cannot start must not
+    // first activate — and possibly open — a tab in front of the user. The
+    // gate goes first: an account that may not run at all (AgentX read-only
+    // license) should hear that, not "sign in", when it also has no key.
+    const gateRefusal = await runGateRefusal(runGate);
+    if (gateRefusal) throw gateRefusal;
     const unusableProvider = describeUnusableProvider(agent);
     if (unusableProvider) throw cloudRunError(unusableProvider, 428);
     const permissionMode = cloudRunPermissionMode(msg, parentRun);

@@ -165,6 +165,12 @@ Every failing tool result starts with one of these and repeats it as
 `WEBMATE_PORT_IN_USE`. `WEBMATE_DISABLED` is raised by Workmate itself when the
 server is switched off.
 
+The extension can also refuse a run for a reason of its own, about the person's
+account rather than the plumbing. Those codes (`EXTENSION_REFUSAL_CODES` in
+`mcp-server/src/errors.ts`) lead the text and ride as `structuredContent.code`
+the same way; today there is one, `license_read_only` (see *AgentX license*
+below), and it brings `structuredContent.license` with it.
+
 ## Extension ID
 
 `brand/brand.config.json` → `manifestOverrides.chrome.key` pins the ID
@@ -286,6 +292,64 @@ answer.
 The side panel's sign-in gate arms its storage listener from the start, so a
 panel sitting on "Đăng nhập để bắt đầu" unlocks by itself when the background
 signs in.
+
+## AgentX license
+
+One AgentX license covers Workmate, WebMate and Chat; the SSO decides it and
+the keys service reports it (the contract lives with the keys service in the
+AgentX SSO repository): `GET /v1/license` → `{ "license": LICENSE }` with the
+same bearer and device headers as `/v1/model-key`, which itself gains
+`license` beside the key and three 403 refusals — `license_required` (state
+`none` or `scheduled`), `license_expired`, `license_revoked` — whose body
+carries `license` too. `license.access` is the only blocking signal
+(`read_only` blocks; it is always `full` while the SSO's "enforced" switch is
+off); `license.notice` says what to show now.
+
+What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
+`cloud-service.js`, `ui/agentx-login-gate.js`, `ui/agentx-cloud-*.js`):
+
+- **The last known license, per account,** in `chrome.storage.local`
+  `agentxLicenseV1` — `{ version: 1, records: [{ subject, license, checkedAt,
+  fetchedAt, expiringNoticeShown }] }`. It is written by every license check
+  and every `/v1/model-key` answer that carries one, and dropped on sign-out.
+- **When it is asked for:** when the side panel opens or restores, and when it
+  becomes visible again or polls (every minute) — but at most once per fifteen
+  minutes unless the person presses "Kiểm tra lại". Settings asks when it
+  opens. A cached key that LiteLLM still accepts never reaches the keys
+  service, so this check is how a panel learns the account went read-only
+  before the gateway blocks the key.
+- **Outages never lock anybody.** A check that fails keeps the last known
+  license; none known means full access. A `/v1/license` that answers 404
+  `not_found` is an SSO from before licensing: no license, and any old one is
+  forgotten — WebMate then behaves exactly as it did before licensing.
+- **A license refusal from `/v1/model-key` is definitive.** It never falls back
+  to the cached key as `stale-offline`, and it never signs the person out: they
+  stay signed in, read-only.
+- **Read-only locks the whole panel** on the license screen (WebMate has no
+  history to browse): the reason by state, whom to contact, "Kiểm tra lại"
+  (asks now; unlocks once the license allows WebMate again) and "Mở Cài đặt".
+  `grace` shows a warning strip under the panel header for as long as it
+  lasts; `expiring` shows a dismissible reminder once per (plan, last day,
+  reminder threshold). Settings → Providers shows plan, state, last day and
+  contact in the account card whenever a license is known, enforced or not.
+- **Workmate-driven runs are refused while read-only.** Chrome's background
+  passes `cloud-runs.js` a `runGate` (brand patch
+  `091-agentx-license-run-gate.patch`) that answers from the last known
+  license — re-checked first when it says read-only, so a renewal is not
+  refused on an old answer; a full or unknown license lets the run start at
+  once and is re-checked behind it. The refusal leaves the extension as
+
+  ```json
+  { "id": 7, "ok": false, "status": 403, "code": "license_read_only",
+    "error": "AgentX WebMate is read-only for this account, so it cannot run this task: …",
+    "license": { "state": "expired", "access": "read_only", … } }
+  ```
+
+  and the MCP server turns it into a failing tool result whose text starts
+  with `license_read_only: ` and whose `structuredContent` is `{ code:
+  "license_read_only", message, license }`, on a relayed copy too. Nothing
+  else starts: no tab is brought forward, no run is recorded. Firefox has no
+  bridge, so nothing to refuse there.
 
 ## Developer checkout
 

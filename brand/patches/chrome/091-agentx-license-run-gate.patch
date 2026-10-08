@@ -1,0 +1,37 @@
+diff --git a/src/background.js b/src/background.js
+--- a/src/background.js
++++ b/src/background.js
+@@ -14,6 +14,7 @@ import {
+ } from './agent/skills.js';
+ import { createAgentXHubSyncRunner } from './agentx/hub-sync.js';
+ import { createWorkmateAuth } from './agentx/workmate-auth.js';
++import { createAgentXLicenseRunGate } from './agentx/license-run-gate.js';
+ import { ScheduledJobManager } from './agent/scheduler.js';
+ import {
+   compileWorkflowFromDemonstration,
+@@ -239,6 +240,9 @@ const cloudRunController = createCloudRunController({
+   startRecording: startTabRecording,
+   stopRecording: stopTabRecording,
+   workflowTrace,
++  // AgentX license: a Workmate-driven run is refused while the account is
++  // read-only (code `license_read_only`, docs/workmate-integration.md).
++  runGate: createAgentXLicenseRunGate({ api: chrome }),
+ });
+ alwaysAllowApiMutationsReady
+   .then(() => cloudRunController.syncBridge())
+@@ -2339,7 +2343,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+ 
+   handleMessage(msg, sender)
+     .then(sendResponse)
+-    .catch(e => sendResponse({ error: e.message, status: e.status || 500 }));
++    .catch(e => sendResponse({
++      error: e.message,
++      status: e.status || 500,
++      // A refusal the caller can act on keeps its code — and, for the AgentX
++      // license, the license — on the way to the bridge.
++      ...(typeof e.code === 'string' && e.code ? { code: e.code } : {}),
++      ...(e.license && typeof e.license === 'object' ? { license: e.license } : {}),
++    }));
+ 
+   return true; // async response
+ });

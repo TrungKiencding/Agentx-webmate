@@ -222,3 +222,19 @@ Cài skill trình duyệt từ [AgentX Skill Hub](https://agenthub.astralx.com.v
 | `brand.config.json` `services.skillHubBaseUrl` | Địa chỉ hub — cũng là origin duy nhất trong `externally_connectable` (Chrome). Rule `MAX_CUSTOM_SKILLS = 40`. |
 
 Build cho hub cục bộ: `AGENTX_HUB_EXTRA_ORIGINS=http://127.0.0.1:5173 npm run brand:build`, rồi trong Settings → Skills → Nâng cao đặt "Địa chỉ hub" = `http://127.0.0.1:5173` (chỉ HTTPS hoặc HTTP loopback). Test: `npm run test:agentx-hub` (chạy trên `brand-dist/` cả chrome lẫn firefox; `npm test` đã gồm).
+
+## Giấy phép AgentX
+
+Một giấy phép AgentX dùng chung cho Workmate, WebMate và Chat. SSO quyết định, dịch vụ khoá (`secondBrainBaseUrl`) báo lại qua `GET /v1/license` và trong mọi câu trả lời của `/v1/model-key`. Chỉ `license.access` quyết định chặn: `read_only` thì khoá. Hợp đồng đầy đủ và những gì WebMate làm với nó: mục *AgentX license* trong `docs/workmate-integration.md`.
+
+| Chỗ | Nội dung |
+|---|---|
+| `additions/common/src/agentx/license.js` | Thuần: `normalizeLicense` (chỉ giữ thứ đáng tin, `access` không hợp lệ ⇒ không có giấy phép), ba mã 403 `license_*`, `licenseFromRefusal`, khoá nhắc hạn `expiringNoticeKey`, câu từ chối tiếng Anh cho lượt chạy Workmate. |
+| `additions/common/src/agentx/cloud-service.js` | `refreshLicense` (tối đa 15 phút một lần, `force` cho "Kiểm tra lại", sự cố thì giữ giấy phép biết gần nhất, 404 `not_found` = SSO cũ ⇒ không có giấy phép), `knownLicense`, `licenseRunRefusal`; bản ghi `agentxLicenseV1` theo tài khoản. Mã `license_*` của `/v1/model-key` nằm trong danh sách `definitive` (không lùi về khoá cũ `stale-offline`) và không xoá phiên. |
+| `additions/common/src/ui/agentx-login-gate.js`, `agentx-login-gate.css` | Màn hình giấy phép (chỉ xem ⇒ khoá cả panel, lý do, liên hệ, "Kiểm tra lại", "Mở Cài đặt"); dải cảnh báo dưới header cho `grace` (luôn hiện) và `expiring` (một lần cho mỗi gói/ngày cuối/mốc nhắc, đóng được). |
+| `additions/common/src/ui/agentx-license-copy.js` | Câu chữ vi/en dùng chung cho gate, dải cảnh báo và thẻ Cài đặt; ngày `dd/MM/yyyy` (vi) chỉ đổi cách viết, không đi qua `Date`. |
+| `additions/common/src/ui/agentx-cloud-ui.js`, `agentx-cloud-settings.js` | Thẻ tài khoản trong Cài đặt: tên gói, trạng thái, ngày cuối, liên hệ (hiện cả khi chưa bắt buộc), cảnh báo đang áp dụng, nút "Kiểm tra lại" khi chỉ xem. |
+| `additions/common/src/agentx/license-run-gate.js` + `patches/chrome/091-agentx-license-run-gate.patch` | `runGate` cho `src/chrome/src/cloud-runs.js`: lượt chạy do Workmate điều khiển bị từ chối với mã `license_read_only` kèm giấy phép; background chuyển `code`/`license` của lỗi sang offscreen bridge. Lỗi nào trong cổng này cũng cho chạy (không bao giờ khoá vì sự cố). |
+| `patches/<target>/060-agentx-login-gate.patch` | Thêm khe `#agentx-license-banner` dưới header của `sidepanel.html`. |
+
+Test: `node test/agentx-auth.test.mjs` (sau `npm run brand:build`; phần "AgentX license"), `node test/run.js` (cổng chạy trong `cloud-runs.js`, bridge chuyển mã), `cd mcp-server && npm test` (`test/refusal.test.mjs`).

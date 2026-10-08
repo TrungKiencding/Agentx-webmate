@@ -352,7 +352,16 @@
             && (response.runId != null || response.run_id != null)
             && typeof response.status === 'string';
           if (response?.error && !isRunSnapshot) {
-            sendJson({ id, ok: false, error: response.error, status: response.status || 500 }, nextSocket);
+            // `code` and `license` ride along when the background refused for
+            // a reason the caller can act on (AgentX: `license_read_only`).
+            sendJson({
+              id,
+              ok: false,
+              error: response.error,
+              status: response.status || 500,
+              ...(typeof response.code === 'string' && response.code ? { code: response.code } : {}),
+              ...(response.license && typeof response.license === 'object' ? { license: response.license } : {}),
+            }, nextSocket);
           } else {
             sendJson({ id, ok: true, result: response }, nextSocket);
           }
