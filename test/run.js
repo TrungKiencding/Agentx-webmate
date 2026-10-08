@@ -30172,8 +30172,9 @@ test('chrome sidepanel shortcuts are documented in help and README', () => {
     assert.match(readme, new RegExp(readmePattern), `README should mention ${shortcut}`);
   }
   assert.match(locale, /Keyboard Shortcuts/, 'chrome: /help should include a keyboard shortcut section');
-  assert.match(readme, /## Keyboard Shortcuts/, 'README should include a keyboard shortcut section');
-  assert.match(readme, /Stop the active run, unless it is only dismissing slash-command autocomplete/, 'README should document Escape vs slash autocomplete behavior');
+  // The AgentX README is Vietnamese; the upstream English wording is accepted too.
+  assert.match(readme, /## (?:Keyboard Shortcuts|Phím tắt)/, 'README should include a keyboard shortcut section');
+  assert.match(readme, /Stop the active run, unless it is only dismissing slash-command autocomplete|Dừng lần chạy hiện tại, trừ khi phím chỉ đang đóng gợi ý lệnh/, 'README should document Escape vs slash autocomplete behavior');
 });
 
 test('sidepanel reports missing background responses without res.content crash', () => {
@@ -38104,7 +38105,7 @@ test('/watch cards and documentation expose polling, baseline, and stop semantic
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const architecture = fs.readFileSync(path.join(ROOT, 'docs/architecture.md'), 'utf8');
   const security = fs.readFileSync(path.join(ROOT, 'docs/security-model.md'), 'utf8');
-  assert.match(readme, /\/watch \[--keep\] \[--secs <30-120>\][\s\S]*?first check immediately[\s\S]*?stable event key/, 'README should document canonical watch usage and baseline/dedupe behavior');
+  assert.match(readme, /\/watch \[--keep\] \[--secs <30-120>\][\s\S]*?(?:first check immediately|kiểm tra lần đầu ngay)[\s\S]*?(?:stable event key|khóa sự kiện ổn định)/, 'README should document canonical watch usage and baseline/dedupe behavior');
   assert.match(architecture, /source: "watch"[\s\S]*?Conditional watches[\s\S]*?untrusted-content boundary[\s\S]*?done\(outcome="success"\)/, 'architecture should document persisted watch state and alert commit order');
   assert.match(architecture, /three consecutive failures stop the watch/, 'architecture should document watch failure tolerance');
   assert.match(architecture, /closes the diverged helper/, 'architecture should document helper-tab cleanup');

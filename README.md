@@ -129,7 +129,9 @@ claude mcp add --transport stdio webmate -- node "$PWD/dist/index.js"
 
 Với ứng dụng MCP khác, cấu hình lệnh `node` và đường dẫn tuyệt đối đến `mcp-server/dist/index.js`. Ứng dụng MCP sẽ khởi chạy server khi kết nối.
 
-Cầu nối mặc định của tiện ích là `ws://127.0.0.1:17374/extension`. Kiểm tra trạng thái trong **Settings → General → Advanced → Cloud bridge**. Nếu báo lỗi kết nối, kiểm tra MCP server có đang chạy và địa chỉ cầu nối có đúng không.
+Cầu nối mặc định của tiện ích là `ws://127.0.0.1:17374/extension`. Kiểm tra trạng thái trong **Settings → General → Advanced → Cloud bridge**. Nếu Settings báo **Connection error: WebSocket error**, thường là không có tiến trình nào nghe ở địa chỉ đã chọn: hãy chạy MCP server, kiểm tra địa chỉ dùng cổng `17374` và để tiến trình đó chạy tiếp.
+
+Mỗi lúc tiện ích chỉ nối tới một đích: WebMate Cloud dùng cổng `17373`, MCP server dùng `17374`, plugin LM Studio dùng `17375`. Đổi đích ngay trong mục Cloud bridge. Xem thêm [mục xử lý sự cố của MCP server](mcp-server/README.md#troubleshooting).
 
 Các công cụ MCP gồm:
 
@@ -161,6 +163,23 @@ Gõ `/help` để xem cú pháp đầy đủ.
 | `/record` | Ghi lại tab. |
 | `/export` | Xuất hội thoại, trace hoặc cấu hình. |
 | `/compact`, `/reset` | Thu gọn ngữ cảnh hoặc đặt lại hội thoại. |
+
+`/watch [--keep] [--secs <30-120>] [--long | --short] <điều kiện và hành động> [/beep]` kiểm tra lần đầu ngay khi tạo, sau đó cứ 60 giây kiểm tra lại (`--secs` nhận 30–120). Với điều kiện tương đối như "khi có commit mới", lần kiểm tra đầu được lấy làm mốc; `--keep` giữ việc theo dõi sau mỗi lần khớp và không báo lại cho cùng một khóa sự kiện ổn định.
+
+Danh sách đầy đủ, kể cả `/dangerously-skip-permissions`, có trong [tài liệu lệnh](docs/slash-commands.md).
+
+## Phím tắt
+
+Phím tắt của bảng bên trong Chrome dùng được khi bảng WebMate đang được chọn.
+
+| Phím | Tác dụng |
+| --- | --- |
+| `Ctrl/Cmd+/` | Đưa con trỏ vào ô nhập. |
+| `Ctrl/Cmd+Shift+A` | Chuyển sang chế độ Hỏi. |
+| `Ctrl/Cmd+Shift+X` | Chuyển sang chế độ Hành động. |
+| `Ctrl/Cmd+Shift+D` | Chuyển sang chế độ Dev. |
+| `Escape` | Dừng lần chạy hiện tại, trừ khi phím chỉ đang đóng gợi ý lệnh. |
+| `Escape` hai lần | Dừng bản ghi đang chạy, từ bảng WebMate hoặc từ trang web. |
 
 ## Phát triển
 
