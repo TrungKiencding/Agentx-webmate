@@ -44,6 +44,21 @@ diff --git a/src/ui/sidepanel.html b/src/ui/sidepanel.html
    <!-- Onboarding Overlay (shown on first launch only) -->
    <div id="onboarding" class="onboarding hidden">
      <div class="ob-card">
+@@ -223,6 +252,14 @@
+       </div>
+     </header>
+ 
++    <!-- AgentX license notice: the grace-period warning, or the reminder before
++         a plan's last day. agentx-login-gate.js fills it in and shows it; a
++         read-only license locks the panel on the gate instead. -->
++    <div id="agentx-license-banner" class="agentx-license-banner hidden" role="status" aria-live="polite">
++      <span class="agentx-license-banner-text" data-agentx-license-banner-text></span>
++      <button type="button" class="agentx-license-banner-dismiss hidden" data-agentx-license-banner-dismiss aria-label="Ẩn thông báo" title="Ẩn thông báo">×</button>
++    </div>
++
+     <!-- Page Inspection Banner -->
+     <div id="inspection-banner" class="hidden">
+       <div class="inspection-dot"></div>
 diff --git a/src/ui/sidepanel.js b/src/ui/sidepanel.js
 --- a/src/ui/sidepanel.js
 +++ b/src/ui/sidepanel.js
@@ -55,7 +70,7 @@ diff --git a/src/ui/sidepanel.js b/src/ui/sidepanel.js
  import { claimRunError } from './run-error-dedupe.js';
  import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
  import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
-@@ -134,6 +135,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
+@@ -137,6 +138,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
  
      applyDOMTranslations(overlay);
      const backgroundLayers = [
@@ -63,7 +78,7 @@ diff --git a/src/ui/sidepanel.js b/src/ui/sidepanel.js
        document.getElementById('onboarding'),
        document.getElementById('app'),
      ].filter(Boolean);
-@@ -225,10 +227,38 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
+@@ -228,10 +230,38 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
    }
  })();
  

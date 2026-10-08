@@ -10,10 +10,27 @@ import {
   transcriptionModelsFromGateway,
   visionModelsForGrant,
 } from './cloud-models.js';
+import {
+  LICENSE_READ_ONLY_CODE,
+  isLicenseReadOnly,
+  isLicenseRefusalCode,
+  licenseFromRefusal,
+  licenseRefusalMessage,
+  normalizeLicense,
+} from './license.js';
 
 export const AGENTX_SESSION_STORAGE_KEY = 'agentxAuthSessionV1';
 export const AGENTX_DEVICE_STORAGE_KEY = 'agentxDeviceIdentityV1';
 export const AGENTX_CREDENTIAL_STORAGE_KEY = 'agentxModelCredentialsV1';
+/**
+ * The last license the keys service reported, one record per account
+ * (`{ version: 1, records: [{ subject, license, checkedAt, fetchedAt,
+ * expiringNoticeShown }] }`). Keyed by subject alone: the license belongs to
+ * the person in the SSO, whichever keys URL reported it.
+ */
+export const AGENTX_LICENSE_STORAGE_KEY = 'agentxLicenseV1';
+/** How long a license check stands before the next one goes to the network. */
+export const LICENSE_CHECK_INTERVAL_MS = 15 * 60_000;
 
 const DEVICE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REFRESH_AHEAD_MS = 60_000;
@@ -22,6 +39,9 @@ const REFRESH_AHEAD_MS = 60_000;
 const ACTIVITY_WRITE_INTERVAL_MS = 60_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 12 * 60 * 60_000;
 const MODEL_PROBE_TIMEOUT_MS = 8_000;
+// The license route is cheap on the server; a slow answer is an outage, and an
+// outage must cost the panel (and a Workmate run waiting on it) little time.
+const LICENSE_REQUEST_TIMEOUT_MS = 8_000;
 const MAX_CACHED_ACCOUNTS = 8;
 
 export class AgentXCloudError extends Error {
@@ -32,6 +52,8 @@ export class AgentXCloudError extends Error {
     this.status = Number(options.status) || 0;
     this.detail = options.detail || message;
     this.transient = options.transient === true;
+    // The license a refusal (or any keys answer) carried, normalized; null otherwise.
+    this.license = options.license || null;
   }
 }
 
@@ -251,10 +273,14 @@ function serviceErrorFromResponse(response, body, fallbackCode = 'service_reques
     'litellm_unavailable',
     'key_unreadable',
   ].includes(code);
+  // A license refusal always means read-only, even when its body carries no
+  // license object this build can read.
+  const license = normalizeLicense(body?.json?.license)
+    || (response.status === 403 && isLicenseRefusalCode(code) ? licenseFromRefusal(code) : null);
   return new AgentXCloudError(
     code,
     safeErrorDetail(body, `Dịch vụ trả HTTP ${response.status}.`),
-    { status: response.status, transient },
+    { status: response.status, transient, license },
   );
 }
 
@@ -962,6 +988,219 @@ export function createAgentXCloudService(options = {}) {
     }).catch(() => {});
   }
 
+  // ─── License ──────────────────────────────────────────────────────────────
+  // The keys service reports the account's license on GET /v1/license and
+  // beside every /v1/model-key answer. WebMate keeps the last one per account:
+  // a cached key that LiteLLM still accepts is reused without asking the keys
+  // service, so this record is how the panel and the background learn that
+  // an account went read-only. An outage keeps whatever was known; nothing
+  // known means full access.
+
+  async function licenseRecords() {
+    const stored = await readStorage(AGENTX_LICENSE_STORAGE_KEY);
+    if (!stored || stored.version !== 1 || !Array.isArray(stored.records)) return [];
+    return stored.records.filter((record) => record && typeof record === 'object' && record.subject);
+  }
+
+  async function readLicenseRecord(subject) {
+    if (!subject) return null;
+    return (await licenseRecords()).find((record) => record.subject === subject) || null;
+  }
+
+  // Every write is a read-modify-write of one storage key, and this document
+  // may run several at once (the license check racing a model-key answer, the
+  // reminder marker). Queued, none of them can drop another's update.
+  let licenseWrites = Promise.resolve();
+  function queueLicenseWrite(task) {
+    const run = licenseWrites.then(task, task);
+    licenseWrites = run.catch(() => {});
+    return run;
+  }
+
+  /** Merges `patch` into the account's record (other fields, such as the notice marker, survive). */
+  function writeLicenseRecord(subject, patch) {
+    return queueLicenseWrite(async () => {
+      const existing = await licenseRecords();
+      const previous = existing.find((record) => record.subject === subject) || {};
+      const record = { ...previous, ...patch, subject };
+      const records = [
+        record,
+        ...existing.filter((entry) => entry.subject !== subject),
+      ].slice(0, MAX_CACHED_ACCOUNTS);
+      await api.storage.local.set({
+        [AGENTX_LICENSE_STORAGE_KEY]: { version: 1, records },
+      }).catch(() => {});
+      return record;
+    });
+  }
+
+  function describeLicense(subject, record, outcome, warningCode = '') {
+    return {
+      signedIn: true,
+      subject,
+      license: normalizeLicense(record?.license),
+      outcome,
+      checkedAt: Number(record?.checkedAt) || null,
+      fetchedAt: Number(record?.fetchedAt) || null,
+      expiringNoticeShown: String(record?.expiringNoticeShown || ''),
+      warningCode,
+    };
+  }
+
+  const signedOutLicense = Object.freeze({
+    signedIn: false,
+    subject: '',
+    license: null,
+    outcome: 'signed-out',
+    checkedAt: null,
+    fetchedAt: null,
+    expiringNoticeShown: '',
+    warningCode: '',
+  });
+
+  /** Records a license the keys service just reported for `subject`. */
+  async function rememberLicense(subject, license) {
+    if (!subject || !license) return;
+    const at = now();
+    await writeLicenseRecord(subject, { license, checkedAt: at, fetchedAt: at });
+  }
+
+  /**
+   * The signed-in account's last known license, from storage alone: no
+   * network, no session refresh, no idle check. `signedIn` only says a session
+   * record exists.
+   */
+  async function knownLicense() {
+    const session = await readSession();
+    const subject = String(session?.user?.subject || '');
+    if (!subject) return { ...signedOutLicense };
+    return describeLicense(subject, await readLicenseRecord(subject), 'stored');
+  }
+
+  async function fetchLicense(session) {
+    const subject = String(session.user.subject);
+    const at = now();
+    const unavailable = async (code) => describeLicense(
+      subject,
+      await writeLicenseRecord(subject, { checkedAt: at }),
+      'unavailable',
+      code,
+    );
+    let response;
+    try {
+      const device = await deviceIdentity();
+      response = await fetchWithTimeout(`${secondBrainBaseUrl}/v1/license`, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${session.idToken}`,
+          'X-AgentX-Device': device.id,
+          ...(device.name ? { 'X-AgentX-Device-Name': device.name } : {}),
+        },
+      }, LICENSE_REQUEST_TIMEOUT_MS);
+    } catch (error) {
+      return unavailable(error?.code || 'network_unavailable');
+    }
+    const body = await responseBody(response);
+    if (response.ok) {
+      const license = normalizeLicense(body.json?.license);
+      if (!license) return unavailable('invalid_license_response');
+      return describeLicense(
+        subject,
+        await writeLicenseRecord(subject, { license, checkedAt: at, fetchedAt: at }),
+        'fetched',
+      );
+    }
+    if (response.status === 404 && body.json?.error === 'not_found') {
+      // An SSO from before licensing. There is nothing to enforce or show, and
+      // whatever an earlier SSO reported no longer stands.
+      return describeLicense(
+        subject,
+        await writeLicenseRecord(subject, { license: null, checkedAt: at, fetchedAt: at }),
+        'unsupported',
+      );
+    }
+    // 401/403/5xx: keep the last known license. A rejected bearer is the
+    // provisioning path's business (it signs the user out where that is
+    // right); a license check must never end a session on its own.
+    return unavailable(serviceErrorFromResponse(response, body, 'license_unavailable').code);
+  }
+
+  let licenseInFlight = null;
+
+  /**
+   * The signed-in account's license, asking the keys service at most once per
+   * LICENSE_CHECK_INTERVAL_MS (`force` skips the wait — the "Kiểm tra lại"
+   * button). Never throws for a network or server problem: `outcome` says
+   * what happened ('cached', 'fetched', 'unsupported', 'unavailable',
+   * 'signed-out') and `license` is the license to act on — the last known one
+   * when the check failed, null when none is known (full access).
+   */
+  async function refreshLicense({ force = false } = {}) {
+    const restored = await restoreSession();
+    const session = restored.session;
+    const subject = String(session?.user?.subject || '');
+    if (!subject || !session.idToken) return { ...signedOutLicense };
+    const record = await readLicenseRecord(subject);
+    const checkedAt = Number(record?.checkedAt) || 0;
+    const at = now();
+    if (!force && checkedAt && checkedAt <= at && at - checkedAt < LICENSE_CHECK_INTERVAL_MS) {
+      return describeLicense(subject, record, 'cached');
+    }
+    // One request per account at a time: the gate's restore, its poll and a
+    // Workmate run may all ask at once.
+    if (licenseInFlight?.subject === subject) return licenseInFlight.promise;
+    const promise = fetchLicense(session).finally(() => {
+      if (licenseInFlight?.promise === promise) licenseInFlight = null;
+    });
+    licenseInFlight = { subject, promise };
+    return promise;
+  }
+
+  function removeLicenseRecord(subject) {
+    if (!subject) return Promise.resolve();
+    return queueLicenseWrite(async () => {
+      const existing = await licenseRecords();
+      const records = existing.filter((record) => record.subject !== subject);
+      if (records.length === existing.length) return;
+      await api.storage.local.set({
+        [AGENTX_LICENSE_STORAGE_KEY]: { version: 1, records },
+      }).catch(() => {});
+    });
+  }
+
+  /** Remembers that the reminder identified by `key` (see expiringNoticeKey) has been shown. */
+  async function markExpiringNoticeShown(subject, key) {
+    if (!subject || !key) return;
+    await writeLicenseRecord(subject, { expiringNoticeShown: String(key) });
+  }
+
+  /**
+   * For a Workmate-driven run (cloud-runs.js `runGate`): the refusal to answer
+   * with while the signed-in account is read-only, or null to let it run.
+   *
+   * A known read-only license is re-checked first (within the usual interval)
+   * so a renewal is not refused on an old answer. Anything else lets the run
+   * start at once and re-checks in the background for the next one — a run
+   * must never wait on, or fail because of, the license service.
+   */
+  async function licenseRunRefusal() {
+    const known = await knownLicense();
+    if (!known.signedIn) return null;
+    if (!isLicenseReadOnly(known.license)) {
+      refreshLicense().catch(() => {});
+      return null;
+    }
+    const checked = await refreshLicense().catch(() => null);
+    const license = checked ? checked.license : known.license;
+    if (!isLicenseReadOnly(license)) return null;
+    return {
+      status: 403,
+      code: LICENSE_READ_ONLY_CODE,
+      message: licenseRefusalMessage(license),
+      license,
+    };
+  }
+
   async function probeCredential(credential) {
     const url = `${stripTrailingSlash(credential.baseUrl)}/models`;
     let response;
@@ -1074,14 +1313,20 @@ export function createAgentXCloudService(options = {}) {
     const body = await responseBody(response);
     if (!response.ok || !body.json) {
       const error = serviceErrorFromResponse(response, body, 'model_key_failed');
+      // A license refusal (403 license_*) leaves the session alone on purpose:
+      // the person stays signed in, read-only, and sees why.
       if (
         (response.status === 401 && ['invalid_token', 'missing_bearer'].includes(error.code)) ||
         (response.status === 403 && error.code === 'device_revoked')
       ) {
         await clearSession();
       }
+      if (error.license) await rememberLicense(session.user.subject, error.license);
       throw error;
     }
+    // An SSO from before licensing sends no `license`; nothing is recorded then.
+    const license = normalizeLicense(body.json.license);
+    if (license) await rememberLicense(session.user.subject, license);
     const key = String(body.json.key || '');
     const grant = grantFromKeyBody(body.json);
     const baseUrl = normalizeHttpsBaseUrl(
@@ -1154,6 +1399,10 @@ export function createAgentXCloudService(options = {}) {
             await saveCredential(merged);
             return merged;
           } catch (error) {
+            // A license refusal is an answer, not an outage: the key service
+            // says this account is read-only even though LiteLLM has not
+            // blocked the key yet.
+            if (isLicenseRefusalCode(error?.code)) throw error;
             // Offline or refused: keep going with what this record knows.
           }
         }
@@ -1186,13 +1435,16 @@ export function createAgentXCloudService(options = {}) {
       await saveCredential(credential);
       return credential;
     } catch (error) {
+      // Answers that a cached key must not paper over as `stale-offline`. The
+      // license codes are among them: the person is read-only, and the cached
+      // key is (or is about to be) blocked at the gateway anyway.
       const definitive = [
         'invalid_token',
         'missing_bearer',
         'device_revoked',
         'gateway_models_empty',
         'invalid_model_key_response',
-      ].includes(error.code);
+      ].includes(error.code) || isLicenseRefusalCode(error.code);
       if (cached && !definitive) {
         return {
           ...cached,
@@ -1256,6 +1508,7 @@ export function createAgentXCloudService(options = {}) {
     if (session) await revokeRefreshTokenBestEffort(session);
     await clearSession();
     await removeCredential(session?.user?.subject);
+    await removeLicenseRecord(session?.user?.subject);
     if (session?.endSessionEndpoint && session.idToken) {
       try {
         const url = new URL(session.endSessionEndpoint);
@@ -1310,9 +1563,13 @@ export function createAgentXCloudService(options = {}) {
     deviceIdentity,
     discoverOidc,
     idleTimeoutMs,
+    knownLicense,
+    licenseRunRefusal,
+    markExpiringNoticeShown,
     provisionModelKey,
     publicStatus,
     readSession,
+    refreshLicense,
     restoreSession,
     retryProvision,
     signIn,

@@ -198,6 +198,43 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* AgentX license: the plan, its state, the last day and whom to ask, with
+ * the warning that applies now underneath. */
+.agentx-cloud-license {
+  display: grid;
+  min-width: 0;
+  gap: var(--ax-cloud-space-sm);
+}
+
+/* Under the connection details one rule already separates the two groups. */
+.agentx-cloud-details + .agentx-cloud-license > .agentx-cloud-details {
+  border-block-start: 0;
+}
+
+.agentx-cloud-license-state {
+  padding: 0.125rem var(--ax-cloud-space-xs);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--ax-cloud-color-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.agentx-cloud-license-state[data-state="active"] {
+  color: var(--ax-cloud-color-success);
+}
+
+.agentx-cloud-license-state[data-state="grace"] {
+  color: var(--ax-cloud-color-warning);
+}
+
+.agentx-cloud-license-state[data-state="expired"],
+.agentx-cloud-license-state[data-state="revoked"] {
+  color: var(--ax-cloud-color-error);
+}
+
 .agentx-cloud-model-select {
   width: min(100%, 32rem);
   min-height: 2.5rem;
