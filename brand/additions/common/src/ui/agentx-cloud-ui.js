@@ -87,9 +87,6 @@ const COPY = {
     licenseContact: 'Contact',
     licenseRecheck: 'Check again',
     checkingLicense: 'Checking your license…',
-    license_required: 'This account has no AgentX license that allows WebMate right now.',
-    license_expired: 'This account’s AgentX license has expired.',
-    license_revoked: 'This account’s AgentX license has been revoked.',
   },
   vi: {
     eyebrow: 'KẾT NỐI TÀI KHOẢN',
@@ -170,9 +167,6 @@ const COPY = {
     licenseContact: 'Liên hệ',
     licenseRecheck: 'Kiểm tra lại',
     checkingLicense: 'Đang kiểm tra giấy phép…',
-    license_required: 'Tài khoản này chưa có giấy phép AgentX cho phép dùng WebMate lúc này.',
-    license_expired: 'Giấy phép AgentX của tài khoản này đã hết hạn.',
-    license_revoked: 'Giấy phép AgentX của tài khoản này đã bị thu hồi.',
   },
 };
 

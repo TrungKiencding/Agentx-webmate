@@ -24,13 +24,21 @@ export const AGENTX_DEVICE_STORAGE_KEY = 'agentxDeviceIdentityV1';
 export const AGENTX_CREDENTIAL_STORAGE_KEY = 'agentxModelCredentialsV1';
 /**
  * The last license the keys service reported, one record per account
- * (`{ version: 1, records: [{ subject, license, checkedAt, fetchedAt,
- * expiringNoticeShown }] }`). Keyed by subject alone: the license belongs to
- * the person in the SSO, whichever keys URL reported it.
+ * (`{ version: 1, records: [{ subject, license, fetchedAt }] }`; `license` is
+ * null for an SSO without licensing). Keyed by subject alone: the license
+ * belongs to the person in the SSO, whichever keys URL reported it.
  */
 export const AGENTX_LICENSE_STORAGE_KEY = 'agentxLicenseV1';
-/** How long a license check stands before the next one goes to the network. */
+/**
+ * Per-account bookkeeping beside it (`{ version: 1, records: [{ subject,
+ * failedAt, expiringNoticeShown }] }`): when a check last failed, and which
+ * reminder before the last day has been shown.
+ */
+export const AGENTX_LICENSE_STATE_STORAGE_KEY = 'agentxLicenseStateV1';
+/** How long a license answer stands before the next check goes to the network. */
 export const LICENSE_CHECK_INTERVAL_MS = 15 * 60_000;
+/** How long after a failed check the next one waits (an outage is not hammered, a blip is not a quarter hour). */
+export const LICENSE_RETRY_AFTER_FAILURE_MS = 60_000;
 
 const DEVICE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REFRESH_AHEAD_MS = 60_000;
@@ -995,16 +1003,22 @@ export function createAgentXCloudService(options = {}) {
   // service, so this record is how the panel and the background learn that
   // an account went read-only. An outage keeps whatever was known; nothing
   // known means full access.
+  //
+  // Two storage keys, so bookkeeping never rewrites a license: the license
+  // record (written only with an answer from the keys service) and the
+  // per-account state beside it (last failed check, reminder marker).
+  // Several documents write them — panels, Settings, the background — so a
+  // license write never replaces one the keys service gave later.
 
-  async function licenseRecords() {
-    const stored = await readStorage(AGENTX_LICENSE_STORAGE_KEY);
+  async function accountRecords(key) {
+    const stored = await readStorage(key);
     if (!stored || stored.version !== 1 || !Array.isArray(stored.records)) return [];
     return stored.records.filter((record) => record && typeof record === 'object' && record.subject);
   }
 
-  async function readLicenseRecord(subject) {
+  async function accountRecord(key, subject) {
     if (!subject) return null;
-    return (await licenseRecords()).find((record) => record.subject === subject) || null;
+    return (await accountRecords(key)).find((record) => record.subject === subject) || null;
   }
 
   // Every write is a read-modify-write of one storage key, and this document
@@ -1017,32 +1031,57 @@ export function createAgentXCloudService(options = {}) {
     return run;
   }
 
-  /** Merges `patch` into the account's record (other fields, such as the notice marker, survive). */
-  function writeLicenseRecord(subject, patch) {
+  /** `update(previous)` returns the account's new record, or null to keep the stored one. */
+  function updateAccountRecord(key, subject, update) {
     return queueLicenseWrite(async () => {
-      const existing = await licenseRecords();
-      const previous = existing.find((record) => record.subject === subject) || {};
-      const record = { ...previous, ...patch, subject };
+      const existing = await accountRecords(key);
+      const previous = existing.find((record) => record.subject === subject) || null;
+      const next = update(previous || {});
+      if (!next) return previous;
+      const record = { ...next, subject };
       const records = [
         record,
         ...existing.filter((entry) => entry.subject !== subject),
       ].slice(0, MAX_CACHED_ACCOUNTS);
-      await api.storage.local.set({
-        [AGENTX_LICENSE_STORAGE_KEY]: { version: 1, records },
-      }).catch(() => {});
+      await api.storage.local.set({ [key]: { version: 1, records } }).catch(() => {});
       return record;
     });
   }
 
-  function describeLicense(subject, record, outcome, warningCode = '') {
+  function removeAccountRecord(key, subject) {
+    if (!subject) return Promise.resolve();
+    return queueLicenseWrite(async () => {
+      const existing = await accountRecords(key);
+      const records = existing.filter((record) => record.subject !== subject);
+      if (records.length === existing.length) return;
+      await api.storage.local.set({ [key]: { version: 1, records } }).catch(() => {});
+    });
+  }
+
+  /**
+   * Stores what the keys service answered at `fetchedAt`: a license, or null
+   * for an SSO without licensing. An answer older than the stored one (a slow
+   * request in another document) changes nothing.
+   */
+  function storeLicense(subject, license, fetchedAt) {
+    return updateAccountRecord(AGENTX_LICENSE_STORAGE_KEY, subject, (previous) => (
+      Number(previous.fetchedAt) > fetchedAt ? null : { license: license || null, fetchedAt }
+    ));
+  }
+
+  function storeLicenseState(subject, patch) {
+    return updateAccountRecord(AGENTX_LICENSE_STATE_STORAGE_KEY, subject, (previous) => ({ ...previous, ...patch }));
+  }
+
+  function describeLicense(subject, record, state, outcome, warningCode = '') {
     return {
       signedIn: true,
       subject,
       license: normalizeLicense(record?.license),
       outcome,
-      checkedAt: Number(record?.checkedAt) || null,
       fetchedAt: Number(record?.fetchedAt) || null,
-      expiringNoticeShown: String(record?.expiringNoticeShown || ''),
+      failedAt: Number(state?.failedAt) || null,
+      expiringNoticeShown: String(state?.expiringNoticeShown || ''),
       warningCode,
     };
   }
@@ -1052,17 +1091,24 @@ export function createAgentXCloudService(options = {}) {
     subject: '',
     license: null,
     outcome: 'signed-out',
-    checkedAt: null,
     fetchedAt: null,
+    failedAt: null,
     expiringNoticeShown: '',
     warningCode: '',
   });
 
+  async function describeStored(subject, outcome, warningCode = '') {
+    const [record, state] = await Promise.all([
+      accountRecord(AGENTX_LICENSE_STORAGE_KEY, subject),
+      accountRecord(AGENTX_LICENSE_STATE_STORAGE_KEY, subject),
+    ]);
+    return describeLicense(subject, record, state, outcome, warningCode);
+  }
+
   /** Records a license the keys service just reported for `subject`. */
   async function rememberLicense(subject, license) {
     if (!subject || !license) return;
-    const at = now();
-    await writeLicenseRecord(subject, { license, checkedAt: at, fetchedAt: at });
+    await storeLicense(subject, license, now());
   }
 
   /**
@@ -1074,18 +1120,20 @@ export function createAgentXCloudService(options = {}) {
     const session = await readSession();
     const subject = String(session?.user?.subject || '');
     if (!subject) return { ...signedOutLicense };
-    return describeLicense(subject, await readLicenseRecord(subject), 'stored');
+    return describeStored(subject, 'stored');
   }
 
   async function fetchLicense(session) {
     const subject = String(session.user.subject);
     const at = now();
-    const unavailable = async (code) => describeLicense(
-      subject,
-      await writeLicenseRecord(subject, { checkedAt: at }),
-      'unavailable',
-      code,
-    );
+    const fetched = async (license, outcome) => {
+      await storeLicense(subject, license, at);
+      return describeStored(subject, outcome);
+    };
+    const unavailable = async (code) => {
+      await storeLicenseState(subject, { failedAt: at });
+      return describeStored(subject, 'unavailable', code);
+    };
     let response;
     try {
       const device = await deviceIdentity();
@@ -1103,48 +1151,54 @@ export function createAgentXCloudService(options = {}) {
     const body = await responseBody(response);
     if (response.ok) {
       const license = normalizeLicense(body.json?.license);
-      if (!license) return unavailable('invalid_license_response');
-      return describeLicense(
-        subject,
-        await writeLicenseRecord(subject, { license, checkedAt: at, fetchedAt: at }),
-        'fetched',
-      );
+      return license ? fetched(license, 'fetched') : unavailable('invalid_license_response');
     }
     if (response.status === 404 && body.json?.error === 'not_found') {
       // An SSO from before licensing. There is nothing to enforce or show, and
       // whatever an earlier SSO reported no longer stands.
-      return describeLicense(
-        subject,
-        await writeLicenseRecord(subject, { license: null, checkedAt: at, fetchedAt: at }),
-        'unsupported',
-      );
+      return fetched(null, 'unsupported');
     }
+    // A refusal that carries a license (the shape /v1/model-key refuses with)
+    // is still an answer.
+    const error = serviceErrorFromResponse(response, body, 'license_unavailable');
+    if (error.license) return fetched(error.license, 'fetched');
     // 401/403/5xx: keep the last known license. A rejected bearer is the
     // provisioning path's business (it signs the user out where that is
     // right); a license check must never end a session on its own.
-    return unavailable(serviceErrorFromResponse(response, body, 'license_unavailable').code);
+    return unavailable(error.code);
   }
 
   let licenseInFlight = null;
 
   /**
    * The signed-in account's license, asking the keys service at most once per
-   * LICENSE_CHECK_INTERVAL_MS (`force` skips the wait — the "Kiểm tra lại"
-   * button). Never throws for a network or server problem: `outcome` says
-   * what happened ('cached', 'fetched', 'unsupported', 'unavailable',
-   * 'signed-out') and `license` is the license to act on — the last known one
-   * when the check failed, null when none is known (full access).
+   * LICENSE_CHECK_INTERVAL_MS after an answer, and once per
+   * LICENSE_RETRY_AFTER_FAILURE_MS after a failed check (`force` skips both —
+   * the "Kiểm tra lại" button). Never throws for a network or server problem:
+   * `outcome` says what happened ('cached', 'fetched', 'unsupported',
+   * 'unavailable', 'signed-out') and `license` is the license to act on — the
+   * last known one when the check failed, null when none is known (full
+   * access).
+   *
+   * `refreshSession: false` (the background) uses the stored ID token as it
+   * is and skips the network when it has expired, so a license check never
+   * adds a token refresh beside the ones the panel and the hub sync already do.
    */
-  async function refreshLicense({ force = false } = {}) {
-    const restored = await restoreSession();
-    const session = restored.session;
+  async function refreshLicense({ force = false, refreshSession = true } = {}) {
+    const session = refreshSession ? (await restoreSession()).session : await readSession();
     const subject = String(session?.user?.subject || '');
     if (!subject || !session.idToken) return { ...signedOutLicense };
-    const record = await readLicenseRecord(subject);
-    const checkedAt = Number(record?.checkedAt) || 0;
     const at = now();
-    if (!force && checkedAt && checkedAt <= at && at - checkedAt < LICENSE_CHECK_INTERVAL_MS) {
-      return describeLicense(subject, record, 'cached');
+    const stored = await describeStored(subject, 'cached');
+    const recent = (stamp, windowMs) => Boolean(stamp) && stamp <= at && at - stamp < windowMs;
+    if (!force && (
+      recent(stored.fetchedAt, LICENSE_CHECK_INTERVAL_MS) ||
+      recent(stored.failedAt, LICENSE_RETRY_AFTER_FAILURE_MS)
+    )) {
+      return stored;
+    }
+    if (!refreshSession && !(Number(session.expiresAt) > at)) {
+      return { ...stored, outcome: 'unavailable', warningCode: 'token_expired' };
     }
     // One request per account at a time: the gate's restore, its poll and a
     // Workmate run may all ask at once.
@@ -1156,22 +1210,10 @@ export function createAgentXCloudService(options = {}) {
     return promise;
   }
 
-  function removeLicenseRecord(subject) {
-    if (!subject) return Promise.resolve();
-    return queueLicenseWrite(async () => {
-      const existing = await licenseRecords();
-      const records = existing.filter((record) => record.subject !== subject);
-      if (records.length === existing.length) return;
-      await api.storage.local.set({
-        [AGENTX_LICENSE_STORAGE_KEY]: { version: 1, records },
-      }).catch(() => {});
-    });
-  }
-
   /** Remembers that the reminder identified by `key` (see expiringNoticeKey) has been shown. */
   async function markExpiringNoticeShown(subject, key) {
     if (!subject || !key) return;
-    await writeLicenseRecord(subject, { expiringNoticeShown: String(key) });
+    await storeLicenseState(subject, { expiringNoticeShown: String(key) });
   }
 
   /**
@@ -1181,17 +1223,18 @@ export function createAgentXCloudService(options = {}) {
    * A known read-only license is re-checked first (within the usual interval)
    * so a renewal is not refused on an old answer. Anything else lets the run
    * start at once and re-checks in the background for the next one — a run
-   * must never wait on, or fail because of, the license service.
+   * must never wait on, or fail because of, the license service. Neither path
+   * refreshes the session (see refreshLicense).
    */
   async function licenseRunRefusal() {
     const known = await knownLicense();
     if (!known.signedIn) return null;
     if (!isLicenseReadOnly(known.license)) {
-      refreshLicense().catch(() => {});
+      refreshLicense({ refreshSession: false }).catch(() => {});
       return null;
     }
-    const checked = await refreshLicense().catch(() => null);
-    const license = checked ? checked.license : known.license;
+    const checked = await refreshLicense({ refreshSession: false }).catch(() => null);
+    const license = checked?.signedIn ? checked.license : known.license;
     if (!isLicenseReadOnly(license)) return null;
     return {
       status: 403,
@@ -1508,7 +1551,8 @@ export function createAgentXCloudService(options = {}) {
     if (session) await revokeRefreshTokenBestEffort(session);
     await clearSession();
     await removeCredential(session?.user?.subject);
-    await removeLicenseRecord(session?.user?.subject);
+    await removeAccountRecord(AGENTX_LICENSE_STORAGE_KEY, session?.user?.subject);
+    await removeAccountRecord(AGENTX_LICENSE_STATE_STORAGE_KEY, session?.user?.subject);
     if (session?.endSessionEndpoint && session.idToken) {
       try {
         const url = new URL(session.endSessionEndpoint);

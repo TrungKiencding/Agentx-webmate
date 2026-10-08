@@ -10,6 +10,7 @@ import {
   removeCloudCredential,
 } from '../agentx/cloud-provider-install.js';
 import { transcriptionModelsFromGateway, visionModelsFromGateway } from '../agentx/cloud-models.js';
+import { isLicenseReadOnly } from '../agentx/license.js';
 import {
   bindAgentXCloudPanel,
   bindAgentXCloudTranscriptionPanel,
@@ -181,8 +182,24 @@ export function createAgentXCloudSettingsController({
 
   async function connectWith(operation, { forceLicense = false } = {}) {
     const result = await operation();
-    const installedCredential = await installCredential(result.credential);
     const license = await checkedLicense({ force: forceLicense });
+    if (isLicenseReadOnly(license)) {
+      // As in the side panel: a read-only account gets no Cloud connection,
+      // even while the gateway still accepts its cached key.
+      paint({
+        ...(await statusFromSession()),
+        signedIn: true,
+        connected: false,
+        provider: null,
+        license,
+        action: null,
+        error: null,
+        testOk: false,
+        testModel: '',
+      });
+      return;
+    }
+    const installedCredential = await installCredential(result.credential);
     paint({
       ...(await statusFromSession()),
       signedIn: true,
@@ -238,7 +255,8 @@ export function createAgentXCloudSettingsController({
   async function perform(action, payload = {}) {
     if (running) return running;
     running = (async () => {
-      const actionName = {
+      // On a read-only account the retry button is "Kiểm tra lại".
+      const actionName = action === 'retry' && isLicenseReadOnly(status.license) ? 'checking-license' : {
         'sign-in': 'signing-in',
         retry: 'provisioning',
         test: 'testing',

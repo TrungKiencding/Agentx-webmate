@@ -309,15 +309,18 @@ What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
 `cloud-service.js`, `ui/agentx-login-gate.js`, `ui/agentx-cloud-*.js`):
 
 - **The last known license, per account,** in `chrome.storage.local`
-  `agentxLicenseV1` — `{ version: 1, records: [{ subject, license, checkedAt,
-  fetchedAt, expiringNoticeShown }] }`. It is written by every license check
-  and every `/v1/model-key` answer that carries one, and dropped on sign-out.
+  `agentxLicenseV1` — `{ version: 1, records: [{ subject, license, fetchedAt
+  }] }`, written only with an answer from the keys service (every license
+  check, every `/v1/model-key` answer that carries one); a slower answer never
+  replaces a later one stored by another document. Bookkeeping lives beside
+  it in `agentxLicenseStateV1` — `{ subject, failedAt, expiringNoticeShown }`
+  — so it never rewrites a license. Both are dropped on sign-out.
 - **When it is asked for:** when the side panel opens or restores, and when it
   becomes visible again or polls (every minute) — but at most once per fifteen
-  minutes unless the person presses "Kiểm tra lại". Settings asks when it
-  opens. A cached key that LiteLLM still accepts never reaches the keys
-  service, so this check is how a panel learns the account went read-only
-  before the gateway blocks the key.
+  minutes after an answer, and once a minute after a failed check, unless the
+  person presses "Kiểm tra lại". Settings asks when it opens. A cached key that
+  LiteLLM still accepts never reaches the keys service, so this check is how a
+  panel learns the account went read-only before the gateway blocks the key.
 - **Outages never lock anybody.** A check that fails keeps the last known
   license; none known means full access. A `/v1/license` that answers 404
   `not_found` is an SSO from before licensing: no license, and any old one is
@@ -337,7 +340,11 @@ What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
   `091-agentx-license-run-gate.patch`) that answers from the last known
   license — re-checked first when it says read-only, so a renewal is not
   refused on an old answer; a full or unknown license lets the run start at
-  once and is re-checked behind it. The refusal leaves the extension as
+  once and is re-checked behind it. The background never refreshes the
+  session for this: it asks with the stored ID token, and not at all once that
+  has expired. A run waiting on the gate counts as busy for
+  `workmate_prepare_update`, and a drain armed meanwhile refuses it (503). The
+  refusal leaves the extension as
 
   ```json
   { "id": 7, "ok": false, "status": 403, "code": "license_read_only",

@@ -103,12 +103,14 @@ export function isLicenseRefusalCode(code) {
 
 /**
  * What a 403 license refusal means when its body carries no usable license:
- * read-only, in the state the code stands for. The next `GET /v1/license`
- * replaces it with the real object.
+ * read-only, in the state the code stands for. `license_required` covers both
+ * `none` and `scheduled`, so it says neither (`unknown`: the screens fall back
+ * to their general wording). The next `GET /v1/license` replaces it with the
+ * real object.
  */
 export function licenseFromRefusal(code) {
   const state = {
-    license_required: 'none',
+    license_required: 'unknown',
     license_expired: 'expired',
     license_revoked: 'revoked',
   }[String(code || '')];

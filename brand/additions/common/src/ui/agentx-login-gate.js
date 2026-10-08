@@ -399,11 +399,25 @@ export function createAgentXLoginGate({
     void restore({ reasonKey });
   }
 
-  /** Adopts a license answer (from the service or storage) for the signed-in account. */
+  /**
+   * Adopts a license answer (from the service or storage) for the signed-in
+   * account. Another account starts from nothing: what this panel showed or
+   * dismissed belonged to the previous one.
+   */
   function adoptLicense(result) {
-    licenseSubject = String(result.subject || '');
+    const subject = String(result.subject || '');
+    if (subject !== licenseSubject) {
+      expiringShownHere = '';
+      expiringDismissed = '';
+    }
+    licenseSubject = subject;
     license = result.license || null;
     expiringShownBefore = String(result.expiringNoticeShown || '');
+  }
+
+  /** Nobody is signed in: no license to show or act on. */
+  function forgetLicense() {
+    adoptLicense({ subject: '', license: null, expiringNoticeShown: '' });
   }
 
   /**
@@ -474,8 +488,14 @@ export function createAgentXLoginGate({
     const check = licenseCheck || service.refreshLicense().catch(() => null);
     const answer = await settleWithin(check, licenseGraceMs);
     if (attempt !== attemptSeq) return;
-    if (answer && answer !== STILL_PENDING && answer.signedIn && isLicenseReadOnly(answer.license)) {
-      showLicenseScreen(answer);
+    // No answer in time (or none at all): act on what is recorded for the
+    // account now signed in — never on what this panel knew about another.
+    const current = answer && answer !== STILL_PENDING && answer.signedIn
+      ? answer
+      : await service.knownLicense().catch(() => null);
+    if (attempt !== attemptSeq) return;
+    if (current?.signedIn && isLicenseReadOnly(current.license)) {
+      showLicenseScreen(current);
       return;
     }
     await installCloudCredential(boundedSendToBackground, result.credential);
@@ -483,7 +503,8 @@ export function createAgentXLoginGate({
     notice = '';
     busyAction = '';
     mode = 'auth';
-    if (answer && answer !== STILL_PENDING && answer.signedIn) adoptLicense(answer);
+    if (current?.signedIn) adoptLicense(current);
+    else forgetLicense();
     unlock();
     render();
     startWatching();
@@ -529,6 +550,7 @@ export function createAgentXLoginGate({
       const status = await service.publicStatus();
       if (attempt !== attemptSeq) return;
       if (!status.signedIn) {
+        forgetLicense();
         busyAction = '';
         if (!notice && status.idleExpired) notice = copy(locale(), 'idleExpired');
         render();
@@ -541,6 +563,7 @@ export function createAgentXLoginGate({
       // a panel learns the account went read-only.
       const known = await service.knownLicense().catch(() => null);
       if (attempt !== attemptSeq) return;
+      if (known?.signedIn) adoptLicense(known);
       const licenseCheck = service.refreshLicense().catch(() => null);
       if (known?.signedIn && isLicenseReadOnly(known.license)) {
         // Known read-only: confirm (throttled) before provisioning at all, so

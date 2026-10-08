@@ -19205,6 +19205,41 @@ test('a run gate that fails, or answers something that is not a refusal, never s
   });
 });
 
+test('a run waiting on the gate counts as busy, and an update drain armed meanwhile wins', async () => {
+  // The gate may wait on the network (AgentX re-checks a read-only license).
+  // Workmate's prepare_update must not see "0 busy" and reload the extension
+  // under a run that is about to start.
+  let releaseGate;
+  const { controller, seen, activatedTabs, settle } = permissionModeCloudHarness({
+    runGate: () => new Promise((resolve) => { releaseGate = resolve; }),
+  });
+  const pending = controller.startRun({ task: 'Open the report' });
+  await settle();
+  try {
+    const draining = await controller.prepareUpdate({});
+    assert.equal(draining.draining, true);
+    assert.equal(draining.busy, 1, 'the run at the gate is busy');
+    releaseGate(null);
+    await assert.rejects(pending, (error) => {
+      assert.equal(error.status, 503);
+      assert.match(error.message, /about to update/);
+      return true;
+    });
+    assert.deepEqual(seen, [], 'the agent must never be dispatched');
+    assert.deepEqual(activatedTabs, []);
+    assert.equal((await controller.prepareUpdate({})).busy, 0);
+  } finally {
+    await controller.prepareUpdate({ resume: true });
+  }
+  // With the drain lifted, the next run goes through the gate as usual.
+  const next = controller.startRun({ task: 'Open the report' });
+  await settle();
+  releaseGate(null);
+  await next;
+  await settle();
+  assert.deepEqual(seen, ['']);
+});
+
 test('offscreen cloud bridge passes a refusal code and license on to the server', async () => {
   const license = { state: 'revoked', access: 'read_only', contact: 'it@example.test' };
   const { sockets, start } = createOffscreenCloudBridgeHarness({

@@ -23,9 +23,11 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto;
 const {
   AGENTX_CREDENTIAL_STORAGE_KEY,
   AGENTX_DEVICE_STORAGE_KEY,
+  AGENTX_LICENSE_STATE_STORAGE_KEY,
   AGENTX_LICENSE_STORAGE_KEY,
   AGENTX_SESSION_STORAGE_KEY,
   LICENSE_CHECK_INTERVAL_MS,
+  LICENSE_RETRY_AFTER_FAILURE_MS,
   createAgentXCloudService,
   normalizeHttpsBaseUrl,
 } = await import(pathToFileURL(SERVICE_PATH).href);
@@ -1305,8 +1307,8 @@ function manualTimers() {
   };
 }
 
-function gateHarness({ seed, clock, fetchImpl, sendToBackground, gateOptions = {} } = {}) {
-  const fake = createApi(seed);
+function gateHarness({ seed, clock, fetchImpl, sendToBackground, gateOptions = {}, apiOptions } = {}) {
+  const fake = createApi(seed, apiOptions);
   const dom = fakeGateDom();
   const calls = [];
   const providerState = {
@@ -1975,7 +1977,6 @@ function licenseRecord(license, overrides = {}) {
     records: [{
       subject: 'user-123',
       license: normalizeLicense(license),
-      checkedAt: NOW,
       fetchedAt: NOW,
       ...overrides,
     }],
@@ -2036,6 +2037,10 @@ async function until(predicate, label, rounds = 100) {
 
 function storedLicense(values, subject = 'user-123') {
   return values[AGENTX_LICENSE_STORAGE_KEY]?.records?.find((record) => record.subject === subject) || null;
+}
+
+function storedLicenseState(values, subject = 'user-123') {
+  return values[AGENTX_LICENSE_STATE_STORAGE_KEY]?.records?.find((record) => record.subject === subject) || null;
 }
 
 function fakeBanner() {
@@ -2145,7 +2150,9 @@ test('license copy says why in Vietnamese and English, with dd/MM/yyyy dates', (
 });
 
 test('a refusal without a license body still reads as read-only, and the bridge message says why', () => {
-  assert.equal(licenseFromRefusal('license_required').state, 'none');
+  // license_required covers none and scheduled alike, so without a body it names neither.
+  assert.equal(licenseFromRefusal('license_required').state, 'unknown');
+  assert.equal(licenseReadOnlySentence(licenseFromRefusal('license_required'), 'vi'), 'Giấy phép AgentX hiện không cho phép dùng WebMate.');
   assert.equal(licenseFromRefusal('license_expired').access, 'read_only');
   assert.equal(licenseFromRefusal('license_revoked').state, 'revoked');
   assert.equal(licenseFromRefusal('device_revoked'), null);
@@ -2180,7 +2187,7 @@ test('GET /v1/license carries the bearer and device, and is asked at most once p
   assert.match(call.init.headers['X-AgentX-Device'], /^[0-9a-f-]{36}$/);
   assert.equal(call.init.headers['X-AgentX-Device-Name'], 'AgentX WebMate macOS');
   assert.equal(storedLicense(fake.values).license.state, 'active');
-  assert.equal(storedLicense(fake.values).checkedAt, NOW);
+  assert.equal(storedLicense(fake.values).fetchedAt, NOW);
 
   clock.now = NOW + LICENSE_CHECK_INTERVAL_MS - 1;
   const cached = await svc.refreshLicense();
@@ -2206,7 +2213,7 @@ test('GET /v1/license carries the bearer and device, and is asked at most once p
   const signedOut = service(createApi({}).api, server.fetchImpl);
   assert.deepEqual(
     { ...(await signedOut.refreshLicense()) },
-    { signedIn: false, subject: '', license: null, outcome: 'signed-out', checkedAt: null, fetchedAt: null, expiringNoticeShown: '', warningCode: '' },
+    { signedIn: false, subject: '', license: null, outcome: 'signed-out', fetchedAt: null, failedAt: null, expiringNoticeShown: '', warningCode: '' },
   );
   assert.equal(server.count(LICENSE_URL), 4);
 });
@@ -2214,7 +2221,7 @@ test('GET /v1/license carries the bearer and device, and is asked at most once p
 test('an SSO without licensing (404 not_found) means no license, and forgets an old one', async () => {
   const fake = createApi({
     [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }),
-    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
   });
   const server = keysServer({
     license: () => jsonResponse({ error: 'not_found', detail: "No route 'v1/license' here." }, 404),
@@ -2228,7 +2235,7 @@ test('an SSO without licensing (404 not_found) means no license, and forgets an 
   // an outage, not an SSO without licensing: the last license stands.
   const proxied = createApi({
     [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }),
-    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
   });
   const html = await service(proxied.api, keysServer({
     license: () => new Response('<h1>Not Found</h1>', { status: 404 }),
@@ -2237,16 +2244,32 @@ test('an SSO without licensing (404 not_found) means no license, and forgets an 
   assert.equal(html.license.state, 'expired');
 });
 
-test('a license outage keeps the last known license and never invents one', async () => {
+test('a license outage keeps the last known license, never invents one, and retries after a minute', async () => {
   // Nothing known + outage = full access (no license).
-  const fresh = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }) });
-  const down = await service(fresh.api, keysServer({
-    license: () => jsonResponse({ error: 'store_unavailable' }, 503),
-  }).fetchImpl).refreshLicense();
+  const clock = { now: NOW };
+  const fresh = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW, expiresAt: NOW + 60 * 60_000 }) });
+  let answer = () => jsonResponse({ error: 'store_unavailable' }, 503);
+  const outageServer = keysServer({ license: () => answer() });
+  const svc = createAgentXCloudService({
+    api: fresh.api, config: CONFIG, fetchImpl: outageServer.fetchImpl, cryptoImpl: webcrypto, now: () => clock.now,
+  });
+  const down = await svc.refreshLicense();
   assert.equal(down.outcome, 'unavailable');
   assert.equal(down.warningCode, 'store_unavailable');
   assert.equal(down.license, null);
-  assert.equal(storedLicense(fresh.values).checkedAt, NOW, 'the attempt counts toward the interval');
+  assert.equal(storedLicense(fresh.values), null, 'a failure writes no license');
+  assert.equal(storedLicenseState(fresh.values).failedAt, NOW);
+  // An outage is not hammered…
+  clock.now = NOW + LICENSE_RETRY_AFTER_FAILURE_MS - 1;
+  assert.equal((await svc.refreshLicense()).outcome, 'cached');
+  assert.equal(outageServer.count(LICENSE_URL), 1);
+  // …and a blip does not cost a quarter of an hour.
+  answer = () => jsonResponse({ license: licenseBody() });
+  clock.now = NOW + LICENSE_RETRY_AFTER_FAILURE_MS;
+  const back = await svc.refreshLicense();
+  assert.equal(back.outcome, 'fetched');
+  assert.equal(back.license.state, 'active');
+  assert.equal(outageServer.count(LICENSE_URL), 2);
 
   // Read-only known + network error / garbage / rejected bearer = still read-only.
   for (const [label, license] of [
@@ -2256,7 +2279,7 @@ test('a license outage keeps the last known license and never invents one', asyn
   ]) {
     const fake = createApi({
       [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }),
-      [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+      [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
     });
     const result = await service(fake.api, keysServer({ license }).fetchImpl).refreshLicense();
     assert.equal(result.outcome, 'unavailable', label);
@@ -2264,6 +2287,58 @@ test('a license outage keeps the last known license and never invents one', asyn
     // A license check never ends the session, whatever it is told.
     assert.equal(fake.values[AGENTX_SESSION_STORAGE_KEY].user.subject, 'user-123', label);
   }
+});
+
+test('a slower answer in one document never replaces a newer one from another', async () => {
+  // Another document (the background, a second panel) stored a later answer
+  // while this one's request was still in flight.
+  const fake = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW + 5_000 }),
+  });
+  const svc = service(fake.api, keysServer().fetchImpl);
+  const result = await svc.refreshLicense({ force: true });
+  assert.equal(storedLicense(fake.values).license.state, 'expired');
+  assert.equal(storedLicense(fake.values).fetchedAt, NOW + 5_000);
+  assert.equal(result.license.state, 'expired', 'what is stored is what is acted on');
+  // Bookkeeping lives beside the license and never rewrites it.
+  await svc.markExpiringNoticeShown('user-123', 'pilot-2026|2026-12-31|7');
+  assert.equal(storedLicense(fake.values).license.state, 'expired');
+  assert.equal(storedLicense(fake.values).fetchedAt, NOW + 5_000);
+  assert.equal(storedLicenseState(fake.values).expiringNoticeShown, 'pilot-2026|2026-12-31|7');
+});
+
+test('a /v1/license refusal that carries a license is still an answer', async () => {
+  const fake = createApi({ [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }) });
+  const result = await service(fake.api, keysServer({
+    license: () => jsonResponse({ error: 'license_expired', detail: 'ended', license: licenseBody(EXPIRED) }, 403),
+  }).fetchImpl).refreshLicense();
+  assert.equal(result.outcome, 'fetched');
+  assert.equal(result.license.state, 'expired');
+  assert.equal(storedLicense(fake.values).license.access, 'read_only');
+});
+
+test('the background license check never refreshes the session', async () => {
+  // The stored ID token has expired: no refresh and no license request — the
+  // last answer stands (the panel and the hub sync keep the token fresh).
+  const expired = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW, expiresAt: NOW - 1 }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+  });
+  const calls = [];
+  const offline = service(expired.api, async (url) => { calls.push(String(url)); throw new Error('no network expected'); });
+  assert.equal((await offline.licenseRunRefusal()).code, 'license_read_only');
+  assert.deepEqual(calls, []);
+  assert.equal(expired.values[AGENTX_SESSION_STORAGE_KEY].refreshToken, 'refresh-1', 'the session is untouched');
+
+  // A token about to expire (the panel would refresh it now) is used as is.
+  const valid = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW, expiresAt: NOW + 30_000 }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+  });
+  const server = keysServer();
+  assert.equal(await service(valid.api, server.fetchImpl).licenseRunRefusal(), null, 'renewed');
+  assert.deepEqual(server.calls.map((call) => call.url), [LICENSE_URL], 'no token endpoint call');
 });
 
 test('a model-key license refusal is definitive: no stale-offline key, session kept, license recorded', async () => {
@@ -2358,13 +2433,21 @@ test('sign-out forgets the account license and keeps everyone else’s', async (
     [AGENTX_LICENSE_STORAGE_KEY]: {
       version: 1,
       records: [
-        { subject: 'user-123', license: normalizeLicense(licenseBody(EXPIRED)), checkedAt: NOW },
-        { subject: 'other-user', license: normalizeLicense(licenseBody()), checkedAt: NOW },
+        { subject: 'user-123', license: normalizeLicense(licenseBody(EXPIRED)), fetchedAt: NOW },
+        { subject: 'other-user', license: normalizeLicense(licenseBody()), fetchedAt: NOW },
+      ],
+    },
+    [AGENTX_LICENSE_STATE_STORAGE_KEY]: {
+      version: 1,
+      records: [
+        { subject: 'user-123', expiringNoticeShown: 'pilot-2026|2026-12-31|7' },
+        { subject: 'other-user', failedAt: NOW },
       ],
     },
   });
   await service(fake.api, async () => new Response(null, { status: 204 })).signOut();
   assert.deepEqual(fake.values[AGENTX_LICENSE_STORAGE_KEY].records.map((record) => record.subject), ['other-user']);
+  assert.deepEqual(fake.values[AGENTX_LICENSE_STATE_STORAGE_KEY].records.map((record) => record.subject), ['other-user']);
 });
 
 test('a Workmate run is refused while the account is read-only, and only then', async () => {
@@ -2393,7 +2476,7 @@ test('a Workmate run is refused while the account is read-only, and only then', 
   const renewedServer = keysServer();
   const renewed = build({
     ...signedIn,
-    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
   }, renewedServer);
   assert.equal(await renewed.gate(), null);
   assert.equal(renewedServer.count(LICENSE_URL), 1, 'confirmed before refusing');
@@ -2401,7 +2484,7 @@ test('a Workmate run is refused while the account is read-only, and only then', 
   // Read-only, stale, and the license service is down: the last answer stands.
   const outage = build({
     ...signedIn,
-    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(EXPIRED), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
   }, keysServer({ license: () => jsonResponse({ error: 'store_unavailable' }, 503) }));
   assert.equal((await outage.gate()).code, 'license_read_only');
 
@@ -2412,7 +2495,7 @@ test('a Workmate run is refused while the account is read-only, and only then', 
   });
   const full = build({
     ...signedIn,
-    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(), { checkedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
+    [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(), { fetchedAt: NOW - LICENSE_CHECK_INTERVAL_MS }),
   }, slowServer);
   assert.equal(await full.gate(), null, 'answered while the license request is still open');
   await flushMicrotasks();
@@ -2427,13 +2510,14 @@ test('a Workmate run is refused while the account is read-only, and only then', 
 
 // ─── License in the side panel ────────────────────────────────────────────
 
-function licenseGate({ seed, server, clock = { now: NOW }, gateOptions = {} } = {}) {
+function licenseGate({ seed, server, clock = { now: NOW }, gateOptions = {}, apiOptions } = {}) {
   const banner = fakeBanner();
   const harness = gateHarness({
     clock,
     seed,
     fetchImpl: server.fetchImpl,
     gateOptions: { bannerRoot: banner.root, ...gateOptions },
+    apiOptions,
   });
   return { ...harness, banner, clock };
 }
@@ -2597,7 +2681,8 @@ test('the grace warning stays; the reminder before the last day shows once per r
     'Gói Pilot nội bộ 2026 hết hạn ngày 31/12/2026 (còn 7 ngày). Liên hệ it@astralx.com.vn để gia hạn.',
   );
   await flushMicrotasks();
-  assert.equal(storedLicense(first.values).expiringNoticeShown, 'pilot-2026|2026-12-31|7');
+  assert.equal(storedLicenseState(first.values).expiringNoticeShown, 'pilot-2026|2026-12-31|7');
+  assert.equal(storedLicense(first.values).license.notice, 'expiring', 'the marker never rewrites the license');
   first.banner.dismiss.emit('click');
   first.gate.stop();
   assert.equal(first.banner.root.classList.contains('hidden'), true);
@@ -2625,6 +2710,117 @@ test('the grace warning stays; the reminder before the last day shows once per r
   await settles(off.gate.start(), 'the panel to unlock');
   off.gate.stop();
   assert.equal(off.banner.root.classList.contains('hidden'), true);
+});
+
+test('a panel never shows one account the license of another', async () => {
+  const timers = manualTimers();
+  let release = null;
+  let asked = 0;
+  const server = keysServer({
+    license: () => {
+      asked += 1;
+      if (asked === 1) return jsonResponse({ license: licenseBody(GRACE) });
+      // The next account's answer is slow.
+      return new Promise((resolve) => { release = () => resolve(jsonResponse({ license: licenseBody() })); });
+    },
+  });
+  const harness = licenseGate({
+    server,
+    seed: SIGNED_IN_WITH_KEY(),
+    gateOptions: { setTimeoutImpl: timers.setTimeout, clearTimeoutImpl: timers.clearTimeout },
+  });
+  await settles(harness.gate.start(), 'the first account to get in');
+  assert.equal(harness.banner.root.classList.contains('hidden'), false, 'the first account is in its grace period');
+
+  // That account signs out in Settings; another signs in.
+  delete harness.values[AGENTX_SESSION_STORAGE_KEY];
+  harness.storageChanged.emit({ [AGENTX_SESSION_STORAGE_KEY]: { oldValue: {}, newValue: undefined } }, 'local');
+  await flushMicrotasks(6);
+  assert.equal(harness.gate.isLocked(), true);
+  harness.values[AGENTX_SESSION_STORAGE_KEY] = session({
+    lastActiveAt: NOW,
+    user: { subject: 'other-user', email: 'other@example.test', displayName: 'Other' },
+  });
+  harness.values[AGENTX_CREDENTIAL_STORAGE_KEY] = {
+    version: 1,
+    records: [credential({ subject: 'other-user', key: 'sk-other', account: 'other' })],
+  };
+  harness.storageChanged.emit(
+    { [AGENTX_SESSION_STORAGE_KEY]: { oldValue: undefined, newValue: harness.values[AGENTX_SESSION_STORAGE_KEY] } },
+    'local',
+  );
+  await flushMicrotasks(8);
+  // The license answer for the new account is not in yet; the grace runs out.
+  timers.fire((timer) => timer.ms === 1_500);
+  await until(() => !harness.gate.isLocked(), 'the second account to get in');
+  assert.equal(harness.banner.root.classList.contains('hidden'), true, 'no grace warning that belongs to someone else');
+  release();
+  await flushMicrotasks(6);
+  harness.gate.stop();
+  assert.equal(harness.gate.isLocked(), false);
+  assert.equal(harness.banner.root.classList.contains('hidden'), true);
+  assert.equal(storedLicense(harness.values, 'other-user').license.state, 'active');
+});
+
+test('signing in as someone else from the retry button never inherits the previous account’s license', async () => {
+  const timers = manualTimers();
+  let authUrl = null;
+  let release = null;
+  let refuseKey = true;
+  const sso = ssoFetch();
+  const fetchImpl = async (url, init = {}) => {
+    const href = String(url);
+    if (href === LICENSE_URL) {
+      // Only the second account asks (the first one's answer is fresh), slowly.
+      return new Promise((resolve) => { release = () => resolve(jsonResponse({ license: licenseBody() })); });
+    }
+    if (href === MODEL_KEY_URL && refuseKey) return jsonResponse({ error: 'litellm_unavailable' }, 503);
+    if (href === TOKEN_ENDPOINT) {
+      return jsonResponse({
+        id_token: jwt({
+          iss: ISSUER, aud: CLIENT_ID, sub: 'other-user', email: 'other@example.test', name: 'Other',
+          nonce: authUrl.searchParams.get('nonce'), exp: Math.floor((NOW + 10 * 60_000) / 1000),
+        }),
+        refresh_token: 'refresh-other',
+      });
+    }
+    return sso(url, init);
+  };
+  const harness = licenseGate({
+    server: { fetchImpl },
+    // Signed in as the first account, in its grace period, but the gateway is down.
+    seed: {
+      [AGENTX_SESSION_STORAGE_KEY]: session({ lastActiveAt: NOW }),
+      [AGENTX_LICENSE_STORAGE_KEY]: licenseRecord(licenseBody(GRACE)),
+    },
+    gateOptions: { setTimeoutImpl: timers.setTimeout, clearTimeoutImpl: timers.clearTimeout },
+    apiOptions: {
+      onTabCreated(tab, events) {
+        authUrl = new URL(tab.url);
+        const callback = new URL(CONFIG.oidcRedirectUris[0]);
+        callback.searchParams.set('code', 'authorization-code');
+        callback.searchParams.set('state', authUrl.searchParams.get('state'));
+        events.onUpdated.emit(tab.id, { url: callback.toString() });
+      },
+    },
+  });
+  const pending = harness.gate.start();
+  await flushMicrotasks(8);
+  assert.equal(harness.gate.isLocked(), true);
+  assert.equal(harness.dom.parts.signin.textContent, 'Thử lại');
+
+  // "Thử lại" runs the interactive sign-in; the person signs in as another account.
+  refuseKey = false;
+  harness.dom.parts.signin.emit('click');
+  await until(() => release !== null, 'the second account’s license request');
+  timers.fire((timer) => timer.ms === 1_500);
+  await settles(pending, 'the second account to get in');
+  assert.equal(harness.values[AGENTX_SESSION_STORAGE_KEY].user.subject, 'other-user');
+  assert.equal(harness.banner.root.classList.contains('hidden'), true, 'no grace warning that belongs to someone else');
+  release();
+  await flushMicrotasks(6);
+  harness.gate.stop();
+  assert.equal(harness.banner.root.classList.contains('hidden'), true);
 });
 
 test('an SSO without licensing leaves the panel exactly as before', async () => {
@@ -2755,11 +2951,11 @@ test('a read-only account in Settings sees why and can check again', () => {
   assert.match(markup, /Đã hết hạn/);
   assert.doesNotMatch(markup, /Còn một bước nữa/, 'read-only is not one step from connected');
   assert.doesNotMatch(markup, /Giấy phép AgentX của tài khoản này đã hết hạn/, 'the refusal is not said twice');
-  // Without a license object (should not happen) the code still reads.
+  // Without a license object (the service always attaches one) the detail still reads.
   const bare = renderAgentXCloudPanel({
-    signedIn: true, connected: false, user: { email: 'k@example.test' }, error: { code: 'license_revoked' },
+    signedIn: true, connected: false, user: { email: 'k@example.test' }, error: { code: 'license_revoked', message: 'revoked by an administrator' },
   }, 'vi');
-  assert.match(bare, /Giấy phép AgentX của tài khoản này đã bị thu hồi\./);
+  assert.match(bare, /Không kết nối được Cloud\. revoked by an administrator/);
 });
 
 test('the Settings controller reports a license refusal and re-checks the license on retry', async () => {
@@ -2813,6 +3009,52 @@ test('the Settings controller reports a license refusal and re-checks the licens
   assert.equal(server.count(LICENSE_URL), before + 1, 'retry asks for the license now, not within the interval');
   assert.equal(providerState.providers.webbrain_cloud.apiKey, 'sk-renewed');
   assert.doesNotMatch(controller.render(), /Kiểm tra lại/);
+});
+
+test('Settings gives a read-only account no Cloud connection, even while its cached key still works', async () => {
+  const fake = createApi({
+    [AGENTX_SESSION_STORAGE_KEY]: session(),
+    [AGENTX_CREDENTIAL_STORAGE_KEY]: {
+      version: 1,
+      records: [credential({ serviceModels: ['model-a'], featureModels: [], reachableModels: ['model-a'] })],
+    },
+  });
+  const server = keysServer({ license: () => jsonResponse({ license: licenseBody(EXPIRED) }) });
+  const background = [];
+  const actions = [];
+  let controller = null;
+  controller = createAgentXCloudSettingsController({
+    api: fake.api,
+    locale: () => 'vi',
+    config: CONFIG,
+    sendToBackground: async (action) => {
+      background.push(action);
+      if (action === 'get_providers') return { providers: { webbrain_cloud: {} }, active: 'openai' };
+      return { ok: true };
+    },
+    onRender: () => actions.push(controller?.status().action ?? null),
+    serviceOptions: { fetchImpl: server.fetchImpl, cryptoImpl: webcrypto, now: () => NOW },
+  });
+  await controller.initialize();
+  const status = controller.status();
+  assert.equal(server.count(MODEL_KEY_URL), 0, 'the cached key was still accepted');
+  assert.equal(status.signedIn, true);
+  assert.equal(status.connected, false);
+  assert.equal(status.error, null);
+  assert.equal(status.license.state, 'expired');
+  assert.equal(background.includes('update_provider'), false, 'the key is not installed');
+  assert.equal(background.includes('set_active_provider'), false);
+  const markup = controller.render();
+  assert.doesNotMatch(markup, /Đã kết nối/);
+  assert.match(markup, /Kiểm tra lại/);
+
+  // "Kiểm tra lại" says what it is doing.
+  const button = fakeElement('button');
+  button.dataset = { agentxCloudAction: 'retry' };
+  controller.bind({ querySelectorAll: () => [button], querySelector: () => null });
+  button.emit('click');
+  await until(() => actions.includes('checking-license') && controller.status().action === null, 'the recheck');
+  assert.match(renderAgentXCloudPanel({ ...controller.status(), action: 'checking-license' }, 'vi'), /Đang kiểm tra giấy phép…/);
 });
 
 test('both branded targets carry the license banner under the panel header', async () => {
