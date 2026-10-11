@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import {
+  createAgentXCloudService,
+  AGENTX_SESSION_STORAGE_KEY,
+} from "../brand/additions/common/src/agentx/cloud-service.js";
+import { webcrypto } from "node:crypto";
 import { createUsageReporter } from "../brand/additions/common/src/agentx/telemetry.js";
 let session = {
   user: { subject: "alice" },
@@ -95,4 +100,75 @@ try {
 }
 console.log(
   "WebMate telemetry: lifecycle, account isolation, real HTTP, bearer and metadata passed",
+);
+
+let consent = false;
+const firefox = createUsageReporter({
+  cloud: { telemetrySession: async () => session },
+  api: {
+    runtime: {
+      ...api.runtime,
+      getManifest: () => ({
+        version: "1.0.11",
+        browser_specific_settings: { gecko: {} },
+      }),
+    },
+    permissions: {
+      getAll: async () => ({
+        data_collection: consent ? ["technicalAndInteraction"] : [],
+      }),
+    },
+  },
+  fetchImpl: async (url, init) => {
+    calls.push({ url, init });
+    return new Response("", { status: 202 });
+  },
+});
+const before = calls.length;
+firefox.begin(20, "ask");
+assert.equal(await firefox.end(20, "done"), false);
+assert.equal(calls.length, before);
+consent = true;
+firefox.begin(21, "ask");
+assert.equal(await firefox.end(21, "done"), true);
+assert.equal(calls.length, before + 1);
+let persisted = {
+  ...session,
+  idToken: "synthetic-id",
+  expiresAt: 5000,
+  lastActiveAt: 1000,
+};
+let writes = 0;
+const auth = createAgentXCloudService({
+  api: {
+    runtime: {},
+    tabs: {},
+    storage: {
+      local: {
+        get: async () => ({ [AGENTX_SESSION_STORAGE_KEY]: persisted }),
+        set: async () => {
+          writes++;
+        },
+      },
+    },
+  },
+  now: () => 1000,
+  cryptoImpl: webcrypto,
+  fetchImpl: async () => {
+    throw new Error("telemetry must not refresh");
+  },
+});
+assert.equal((await auth.telemetrySession()).user.subject, "bob");
+persisted = undefined;
+assert.equal(await auth.telemetrySession(), null);
+persisted = {
+  ...session,
+  idToken: "synthetic-id",
+  expiresAt: 900,
+  lastActiveAt: 1000,
+};
+assert.equal(await auth.telemetrySession(), null);
+assert.equal(writes, 0);
+console.log(
+  "WebMate telemetry: Firefox consent and fresh non-mutating session reads passed",
 );

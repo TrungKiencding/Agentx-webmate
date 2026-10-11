@@ -34,6 +34,12 @@ export function createUsageReporter({
       return false;
     pending += 1;
     try {
+      const manifest = api.runtime.getManifest();
+      if (manifest.browser_specific_settings?.gecko) {
+        const permissions = await api.permissions?.getAll();
+        if (!permissions?.data_collection?.includes("technicalAndInteraction"))
+          return false;
+      }
       const first = await run.identity;
       if (!first?.user?.subject) return false;
       const current = await cloud.telemetrySession();
@@ -62,7 +68,7 @@ export function createUsageReporter({
               ? "agent.plan"
               : "chat.turn",
         outcome: failed ? "failure" : "success",
-        version: api.runtime.getManifest().version,
+        version: manifest.version,
         os,
         browser,
         duration_ms: Math.min(
