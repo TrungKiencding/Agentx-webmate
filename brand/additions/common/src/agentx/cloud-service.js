@@ -1568,10 +1568,12 @@ export function createAgentXCloudService(options = {}) {
   }
 
   async function telemetrySession() {
-    const restored = await restoreSession();
-    if (!restored.session || restored.session.accessToken) return restored.session;
-    if (!restored.session.refreshToken) return null;
-    return (await refreshSession(restored.session)).session;
+    // Read the current persisted account without refreshing or mutating sign-in.
+    // The regular auth owner stores fresh access tokens during normal refresh.
+    const session = await readStorage(AGENTX_SESSION_STORAGE_KEY);
+    if (!session?.accessToken || !session?.user?.subject || !session?.idToken) return null;
+    if (sessionIsIdleExpired(session) || now() >= Number(session.expiresAt)) return null;
+    return session;
   }
 
   async function publicStatus() {
