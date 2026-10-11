@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.0.9",
-  "publishedAt": "2026-10-08T17:15:11.976Z",
+  "version": "1.0.10",
+  "publishedAt": "2026-10-11T20:43:10.814Z",
   "chrome": {
-    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.9/agentx-webmate-chrome-1.0.9.zip",
-    "sha256": "38e847cbe3fa96021c365074251df4ca83cdc3bfb911667b1bc3d65670179e7d",
-    "bytes": 5207001
+    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.10/agentx-webmate-chrome-1.0.10.zip",
+    "sha256": "b8b03ff68490fd53dd07515429eef5d55c4fe2d35871bd6faa25834086c1bed5",
+    "bytes": 5208667
   },
   "minWorkmate": "0.21.0",
   "minProtocol": 3,
   "notes": {
-    "vi": "### Added\n- AgentX licenses in WebMate. One license covers Workmate, WebMate and Chat. While an account is read-only, no model is called anywhere in the extension: the side panel shows a license screen; scheduled tasks and watches are held and run again once AI is allowed. A run started from Workmate is refused with `license_read_only`, and the license is attached. The panel warns during the grace period and reminds before the last day. Settings → Providers shows the plan. An outage never locks anyone.\n- MCP server 1.4.0 passes the extension's own refusals on to Workmate (`license_read_only` with the license object).\n\n### Changed\n- README rewritten for AgentX WebMate (Vietnamese). It covers keyboard shortcuts, `/watch` and the three bridge ports.\n- MCP tests wait for the browser handoff acknowledgement.",
-    "en": "### Added\n- AgentX licenses in WebMate. One license covers Workmate, WebMate and Chat. While an account is read-only, no model is called anywhere in the extension: the side panel shows a license screen; scheduled tasks and watches are held and run again once AI is allowed. A run started from Workmate is refused with `license_read_only`, and the license is attached. The panel warns during the grace period and reminds before the last day. Settings → Providers shows the plan. An outage never locks anyone.\n- MCP server 1.4.0 passes the extension's own refusals on to Workmate (`license_read_only` with the license object).\n\n### Changed\n- README rewritten for AgentX WebMate (Vietnamese). It covers keyboard shortcuts, `/watch` and the three bridge ports.\n- MCP tests wait for the browser handoff acknowledgement."
+    "vi": "### Added\n- First-party SSO usage metrics for completed chat turns and browser automation runs, including application version, operating system, browser, duration and success/failure. Events use the signed-in AgentX account and workspace; retries reuse one event ID. Prompts, page addresses, message bodies and raw errors are excluded.\n\n### Fixed\n- Keep OAuth access tokens available after sign-in and refresh so existing accounts can report usage without another interactive login.",
+    "en": "### Added\n- First-party SSO usage metrics for completed chat turns and browser automation runs, including application version, operating system, browser, duration and success/failure. Events use the signed-in AgentX account and workspace; retries reuse one event ID. Prompts, page addresses, message bodies and raw errors are excluded.\n\n### Fixed\n- Keep OAuth access tokens available after sign-in and refresh so existing accounts can report usage without another interactive login."
   },
-  "signature": "ed25519:J28LB3dNB83gJFgFs3Pkk5xGjvu9cBBqQg7dqUZT+wdBYv5l5x/+JbLZlaHVFuDQ8ZlHUXykoHQ0BxlSTGCsDw=="
+  "signature": "ed25519:tpxjznEdDymKkSLl/t/8/mVsyM8k0I5hbxiU3bSJGmZffHjkv+am6YEfXVlnaV0WZCzebJedOr1PhZoW8c9SBg=="
 }
