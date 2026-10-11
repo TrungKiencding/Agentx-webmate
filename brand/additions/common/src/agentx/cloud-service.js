@@ -618,6 +618,7 @@ export function createAgentXCloudService(options = {}) {
     validateIdTokenClaims(claims, oidc, { nonce: details.nonce, now: now() });
     const session = {
       idToken: body.json.id_token,
+      accessToken: body.json.access_token || '',
       refreshToken: body.json.refresh_token || '',
       expiresAt: Number(claims.exp) * 1000,
       issuer: oidc.issuer,
@@ -874,6 +875,7 @@ export function createAgentXCloudService(options = {}) {
     const refreshed = {
       ...session,
       idToken: body.json.id_token,
+      accessToken: body.json.access_token || '',
       refreshToken: body.json.refresh_token || session.refreshToken,
       expiresAt: Number(claims.exp) * 1000,
       user: publicUser(claims),
@@ -1565,6 +1567,13 @@ export function createAgentXCloudService(options = {}) {
     return { signedIn: false, outcome: 'signed-out' };
   }
 
+  async function telemetrySession() {
+    const restored = await restoreSession();
+    if (!restored.session || restored.session.accessToken) return restored.session;
+    if (!restored.session.refreshToken) return null;
+    return (await refreshSession(restored.session)).session;
+  }
+
   async function publicStatus() {
     const restored = await restoreSession();
     const session = restored.session;
@@ -1623,5 +1632,6 @@ export function createAgentXCloudService(options = {}) {
     silentSignInAndProvision,
     signOut,
     touchSession,
+    telemetrySession,
   };
 }

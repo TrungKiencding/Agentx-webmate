@@ -1,0 +1,38 @@
+diff --git a/src/background.js b/src/background.js
+--- a/src/background.js
++++ b/src/background.js
+@@ -1,5 +1,7 @@
+ import { ProviderManager } from './providers/manager.js';
+ import { Agent } from './agent/agent.js';
++import { createAgentXCloudService } from './agentx/cloud-service.js';
++import { createUsageReporter } from './agentx/telemetry.js';
+ import {
+   CUSTOM_SKILLS_STORAGE_KEY,
+   DEFAULT_SKILL_SOURCES,
+@@ -151,6 +153,7 @@
+ const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
+ setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
+ const agent = new Agent(providerManager);
++agent.usageReporter = createUsageReporter({ cloud: createAgentXCloudService({ api: chrome }), api: chrome });
+ const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
+ const alwaysAllowApiMutationsReady = chrome.storage.local
+   .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+diff --git a/src/agent/agent.js b/src/agent/agent.js
+--- a/src/agent/agent.js
++++ b/src/agent/agent.js
+@@ -9479,6 +9479,7 @@
+   }
+ 
+   async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
++    try { this.usageReporter?.begin(tabId, mode); } catch {}
+     const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions)
+       ? { tabUrl: '', tabTitle: '' }
+       : (tabInfo || await this._getTabUrlTitle(tabId));
+@@ -9524,6 +9525,7 @@
+    * message paths so the teardown stays in one place. (#9)
+    */
+   async _endTraceRun(tabId, runId, status, finalContent) {
++    try { void this.usageReporter?.end(tabId, status)?.catch(() => {}); } catch {}
+     if (!runId) return;
+     try {
+       await trace.endRun(runId, { status, finalContent });
