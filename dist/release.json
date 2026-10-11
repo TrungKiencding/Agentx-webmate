@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.0.10",
-  "publishedAt": "2026-10-11T20:43:10.814Z",
+  "version": "1.0.11",
+  "publishedAt": "2026-10-11T20:57:10.736Z",
   "chrome": {
-    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.10/agentx-webmate-chrome-1.0.10.zip",
-    "sha256": "b8b03ff68490fd53dd07515429eef5d55c4fe2d35871bd6faa25834086c1bed5",
-    "bytes": 5208667
+    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.11/agentx-webmate-chrome-1.0.11.zip",
+    "sha256": "bc4fadbb29845d0f4ca6b347f964b12135cf13a5ea3e8456f82f3bab2c6e4925",
+    "bytes": 5209016
   },
   "minWorkmate": "0.21.0",
   "minProtocol": 3,
   "notes": {
-    "vi": "### Added\n- First-party SSO usage metrics for completed chat turns and browser automation runs, including application version, operating system, browser, duration and success/failure. Events use the signed-in AgentX account and workspace; retries reuse one event ID. Prompts, page addresses, message bodies and raw errors are excluded.\n\n### Fixed\n- Keep OAuth access tokens available after sign-in and refresh so existing accounts can report usage without another interactive login.",
-    "en": "### Added\n- First-party SSO usage metrics for completed chat turns and browser automation runs, including application version, operating system, browser, duration and success/failure. Events use the signed-in AgentX account and workspace; retries reuse one event ID. Prompts, page addresses, message bodies and raw errors are excluded.\n\n### Fixed\n- Keep OAuth access tokens available after sign-in and refresh so existing accounts can report usage without another interactive login."
+    "vi": "### Fixed\n- Count successful plan-only output as successful planning, preserve the first start time when tracing is disabled, and bound concurrent metric deliveries.\n- Read the current persisted account for metrics without refreshing or changing sign-in, preventing collection from interfering with authentication or using a stale account.",
+    "en": "### Fixed\n- Count successful plan-only output as successful planning, preserve the first start time when tracing is disabled, and bound concurrent metric deliveries.\n- Read the current persisted account for metrics without refreshing or changing sign-in, preventing collection from interfering with authentication or using a stale account."
   },
-  "signature": "ed25519:tpxjznEdDymKkSLl/t/8/mVsyM8k0I5hbxiU3bSJGmZffHjkv+am6YEfXVlnaV0WZCzebJedOr1PhZoW8c9SBg=="
+  "signature": "ed25519:q4VNt51XGiL+NCmITA+DfJoIhibogK3O06i44AGUFK02RRmy8dfph1O7zxwwWo+FzkHR47Rner9vzmRpfd07CQ=="
 }
