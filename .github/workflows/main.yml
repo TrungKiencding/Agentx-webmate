@@ -3,6 +3,11 @@ name: Build and Package
 on:
   workflow_dispatch:
     inputs:
+      package_current:
+        description: Package the already committed version without another version bump.
+        required: false
+        type: boolean
+        default: false
       manual_changelog:
         description: Optional changelog Markdown body. Leave empty to list the commits since the last tag.
         required: false
@@ -38,6 +43,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Build patch release notes
+        if: ${{ !inputs.package_current }}
         env:
           MANUAL_CHANGELOG: ${{ inputs.manual_changelog }}
         run: |
@@ -58,9 +64,11 @@ jobs:
           fi
 
       - name: Bump patch version
+        if: ${{ !inputs.package_current }}
         run: node scripts/bump-version.mjs
 
       - name: Update changelog
+        if: ${{ !inputs.package_current }}
         run: |
           version=$(node -p "require('./package.json').version")
           node scripts/update-changelog.mjs \
@@ -69,6 +77,7 @@ jobs:
             --notes-file .release/changelog-body.md
 
       - name: Commit release metadata
+        if: ${{ !inputs.package_current }}
         run: |
           version=$(node -p "require('./package.json').version")
           git add package.json package-lock.json src/chrome/manifest.json src/firefox/manifest.json src/chrome/src/ui/settings.js src/firefox/src/ui/settings.js src/chrome/ARCHITECTURE.md src/firefox/ARCHITECTURE.md CHANGELOG.md
