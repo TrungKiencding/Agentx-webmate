@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import {
   createAgentXCloudService,
   AGENTX_SESSION_STORAGE_KEY,
-} from "../brand/additions/common/src/agentx/cloud-service.js";
+} from "../brand-dist/chrome/src/agentx/cloud-service.js";
 import { webcrypto } from "node:crypto";
 import { createUsageReporter } from "../brand/additions/common/src/agentx/telemetry.js";
 let session = {

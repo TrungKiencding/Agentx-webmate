@@ -33,12 +33,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/file-picker-guard-loader.js", "src/content/net-idle-loader.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/file-picker-guard-loader.js",
+        "src/content/net-idle-loader.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
@@ -50,13 +57,21 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/selection-shortcut.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/selection-shortcut.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/redaction-regions.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/redaction-regions.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true
@@ -72,7 +87,9 @@
         "*://*.youtube.com/*",
         "*://youtu.be/*"
       ],
-      "js": ["src/agent/smd-loader.js"],
+      "js": [
+        "src/agent/smd-loader.js"
+      ],
       "run_at": "document_start"
     }
   ],
@@ -106,7 +123,12 @@
       "id": "webbrain@esokullu.com",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": [
+          "none"
+        ],
+        "optional": [
+          "technicalAndInteraction"
+        ]
       }
     }
   },
