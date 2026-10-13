@@ -172,3 +172,59 @@ assert.equal(writes, 0);
 console.log(
   "WebMate telemetry: Firefox consent and fresh non-mutating session reads passed",
 );
+
+// Every completed turn reaches the reporter, chat included. The hook used to
+// sit in _startTraceRun, which an ask-mode turn never calls when it streams,
+// so ordinary side-panel chats were never reported.
+for (const name of ["DOMMatrix", "ImageData", "Path2D"]) {
+  globalThis[name] = globalThis[name] || class {};
+}
+for (const target of ["chrome", "firefox"]) {
+  const { Agent } = await import(`../brand-dist/${target}/src/agent/agent.js`);
+  for (const streaming of [false, true]) {
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: "full",
+      contextWindow: 128000,
+      model: "test-model",
+      name: "test-provider",
+      chat: async () => ({ content: "ok", toolCalls: [] }),
+      async *chatStream() {
+        yield { type: "text", content: "ok" };
+        yield { type: "done" };
+      },
+    };
+    const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = streaming ? 31 : 30;
+    const seen = [];
+    agent.usageReporter = {
+      begin: (key, mode) => seen.push(["begin", key, mode]),
+      end: async (key, status) => {
+        seen.push(["end", key, status]);
+        return true;
+      },
+    };
+    agent.planBeforeAct = false;
+    agent.maxSteps = 3;
+    agent._permissionMode = "bypass";
+    agent._hydrate = async () => {};
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: "user", content });
+    agent._maybeReinjectAdapter = async () => {};
+    agent._ensureProgressSessionForCurrentTask = async () => ({ mode: "inactive" });
+    agent._persist = () => {};
+    agent._persistNow = async () => true;
+    // The trace store needs the browser; the reporter must not depend on it.
+    agent._startTraceRun = async () => null;
+    agent.conversationModes.set(tabId, "ask");
+    agent.conversations.set(tabId, [{ role: "system", content: "sys" }]);
+    const turn = streaming
+      ? agent.processMessageStream(tabId, "Hello", () => {}, "ask")
+      : agent.processMessage(tabId, "Hello", () => {}, "ask");
+    await turn;
+    const label = `${target} ${streaming ? "streaming" : "non-streaming"} ask turn`;
+    assert.deepEqual(seen, [["begin", tabId, "ask"], ["end", tabId, "done"]], label);
+  }
+}
+console.log("WebMate telemetry: ask-mode turns report, streaming and not, Chrome and Firefox builds passed");

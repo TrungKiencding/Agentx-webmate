@@ -9,7 +9,7 @@ diff --git a/src/background.js b/src/background.js
  import {
    CUSTOM_SKILLS_STORAGE_KEY,
    DEFAULT_SKILL_SOURCES,
-@@ -151,6 +153,7 @@
+@@ -155,6 +157,7 @@
  const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
  setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
  const agent = new Agent(providerManager);
@@ -20,15 +20,7 @@ diff --git a/src/background.js b/src/background.js
 diff --git a/src/agent/agent.js b/src/agent/agent.js
 --- a/src/agent/agent.js
 +++ b/src/agent/agent.js
-@@ -9479,6 +9479,7 @@
-   }
- 
-   async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
-+    try { this.usageReporter?.begin(tabId, mode); } catch {}
-     const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions)
-       ? { tabUrl: '', tabTitle: '' }
-       : (tabInfo || await this._getTabUrlTitle(tabId));
-@@ -9524,6 +9525,7 @@
+@@ -9525,6 +9525,7 @@
     * message paths so the teardown stays in one place. (#9)
     */
    async _endTraceRun(tabId, runId, status, finalContent) {
@@ -36,3 +28,19 @@ diff --git a/src/agent/agent.js b/src/agent/agent.js
      if (!runId) return;
      try {
        await trace.endRun(runId, { status, finalContent });
+@@ -26416,6 +26417,7 @@
+     // agent loop — runs inside this try so the finally always ends the trace
+     // run and clears currentRunId, even on an early throw during setup. (#2)
+     try {
++    try { this.usageReporter?.begin(tabId, mode); } catch {}
+     // When the planner gate runs, start the trace up-front so the planner LLM
+     // call is recorded under this run; otherwise it's started just before the
+     // loop. _startTraceRun is the single source of truth (no duplicate tab
+@@ -27379,6 +27381,7 @@
+     // loop — runs inside this try so the finally always ends the trace run and
+     // clears currentRunId, even on an early throw during setup. (#2)
+     try {
++    try { this.usageReporter?.begin(tabId, mode); } catch {}
+     let plannerTabInfo = null;
+     const readScopePreflight = !selectionOnly && !standaloneChatRun && this._readCompletenessNeedsScopeClassification(tabId);
+     if ((this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun) || readScopePreflight) {
