@@ -13,7 +13,7 @@ diff --git a/src/background.js b/src/background.js
    console.warn('[WebBrain] Custom skills hydration failed', e);
  });
  
-+// AgentX Skill Hub (plan Phase 4): desired-state sync for browser skills.
++// AgentX AgentHub (plan Phase 4): desired-state sync for browser skills.
 +// Polls /v1/me/changes every five minutes (and on demand from the panel and
 +// Settings), installs/updates/parks/removes hub skills in customSkills —
 +// the storage listener above hot-reloads them — and answers the hub
@@ -32,7 +32,7 @@ diff --git a/src/background.js b/src/background.js
      }
  
      // --- Provider Management ---
-+    // --- AgentX Skill Hub (plan Phase 4) ---
++    // --- AgentX AgentHub (plan Phase 4) ---
 +    case 'agentx_hub_status':
 +      return await agentxHubSync.status();
 +    case 'agentx_hub_sync':

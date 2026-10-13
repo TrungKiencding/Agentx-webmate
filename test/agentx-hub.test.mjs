@@ -1,4 +1,4 @@
-// AgentX Skill Hub integration (plan Phase 4; read-only hub records, plan §8
+// AgentX AgentHub integration (plan Phase 4; read-only hub records, plan §8
 // decision 9) — runs against brand-dist/, the way test/agentx-auth.test.mjs
 // does, because the hub record shape and the edit lock live in a brand patch
 // on src/agent/skills.js.
@@ -770,17 +770,17 @@ test('Fork to edit makes a plain-text copy, withdraws this device\'s hub rows fi
 test('the Settings card labels hub records, renders search results and installed rows, and translates errors', async () => {
   for (const target of ['chrome', 'firefox']) {
     const { agentxHubSourceLabel, agentxHubEditLockedMessage, agentxHubSkillRowActions, describeHubError, createAgentXHubSettingsController } = await load(target, 'src/ui/agentx-hub-settings.js');
-    assert.equal(agentxHubSourceLabel({ sourceType: 'hub', hubSlug: 'vneb-portal', hubVersion: '1.0.0' }, 'vi'), 'Từ AgentX Hub · vneb-portal@1.0.0');
-    assert.equal(agentxHubSourceLabel({ sourceType: 'text', hubSlug: 'vneb-portal', hubVersion: '1.0.0' }, 'en'), 'Edited from AgentX Hub (vneb-portal@1.0.0)');
-    assert.equal(agentxHubSourceLabel({ sourceType: 'text', forkedFrom: { slug: 'vneb-portal', version: '1.0.0' } }, 'vi'), 'Bản sao từ AgentX Hub (vneb-portal@1.0.0)');
+    assert.equal(agentxHubSourceLabel({ sourceType: 'hub', hubSlug: 'vneb-portal', hubVersion: '1.0.0' }, 'vi'), 'Từ AgentX AgentHub · vneb-portal@1.0.0');
+    assert.equal(agentxHubSourceLabel({ sourceType: 'text', hubSlug: 'vneb-portal', hubVersion: '1.0.0' }, 'en'), 'Edited from AgentX AgentHub (vneb-portal@1.0.0)');
+    assert.equal(agentxHubSourceLabel({ sourceType: 'text', forkedFrom: { slug: 'vneb-portal', version: '1.0.0' } }, 'vi'), 'Bản sao từ AgentX AgentHub (vneb-portal@1.0.0)');
     assert.equal(agentxHubSourceLabel({ sourceType: 'url', sourceUrl: 'https://x' }, 'vi'), '', 'non-hub records fall through to the upstream label');
     assert.match(agentxHubEditLockedMessage('vi'), /chỉ đọc/);
     assert.match(agentxHubEditLockedMessage('en'), /read-only/);
-    // The enabled-skills list: a hub row is View · Open on the Hub · Fork · Remove, never Edit; an edited copy keeps Edit and gains Restore.
-    assert.match(agentxHubEditLockedMessage('vi'), /"Mở trên Hub" rồi "Sửa"/, 'the author is sent to the hub editor, not to a fork');
+    // The enabled-skills list: a hub row is View · Open on AgentHub · Fork · Remove, never Edit; an edited copy keeps Edit and gains Restore.
+    assert.match(agentxHubEditLockedMessage('vi'), /"Mở trên AgentHub" rồi "Sửa"/, 'the author is sent to the hub editor, not to a fork');
     const hubRow = agentxHubSkillRowActions({ id: 'hub_vneb-portal', name: 'VNEB <b>', sourceType: 'hub', hubSlug: 'vneb-portal', sourceUrl: 'https://agenthub.astralx.com.vn/skills/vneb-portal' }, 'vi', { edit: 'Sửa', remove: 'Xóa' });
     assert.match(hubRow, /data-agentx-hub-row-action="view"[^>]*>Xem</);
-    assert.match(hubRow, /data-agentx-hub-row-action="open"[^>]*data-hub-url="https:\/\/agenthub\.astralx\.com\.vn\/skills\/vneb-portal"[^>]*>Mở trên Hub</);
+    assert.match(hubRow, /data-agentx-hub-row-action="open"[^>]*data-hub-url="https:\/\/agenthub\.astralx\.com\.vn\/skills\/vneb-portal"[^>]*>Mở trên AgentHub</);
     assert.match(hubRow, /data-agentx-hub-row-action="fork"[^>]*>Tách bản sao để sửa</);
     // Stored data is never trusted into an attribute or a tab: no http(s), no button.
     for (const sourceUrl of ['', 'javascript:alert(1)', 'https://x" onmouseover="y']) {
@@ -791,9 +791,9 @@ test('the Settings card labels hub records, renders search results and installed
     assert.match(hubRow, /data-skill-name="VNEB &lt;b&gt;"/, 'escaped');
     const editedRow = agentxHubSkillRowActions({ id: 'hub_mine', name: 'Mine', sourceType: 'text', hubSlug: 'mine' }, 'en', { edit: 'Edit', remove: 'Remove' });
     assert.match(editedRow, /data-agentx-hub-row-action="edit"[^>]*>Edit</);
-    assert.match(editedRow, /data-agentx-hub-row-action="restore"[^>]*>Restore hub version</);
+    assert.match(editedRow, /data-agentx-hub-row-action="restore"[^>]*>Restore AgentHub version</);
     assert.doesNotMatch(editedRow, /"open"/, 'no hub page recorded, no button');
-    assert.match(agentxHubSkillRowActions({ id: 'hub_mine', sourceType: 'text', hubSlug: 'mine', sourceUrl: 'https://hub.test/skills/mine' }, 'en'), /data-agentx-hub-row-action="open"[^>]*>Open on the Hub</);
+    assert.match(agentxHubSkillRowActions({ id: 'hub_mine', sourceType: 'text', hubSlug: 'mine', sourceUrl: 'https://hub.test/skills/mine' }, 'en'), /data-agentx-hub-row-action="open"[^>]*>Open on AgentHub</);
     assert.doesNotMatch(editedRow, /"fork"/);
     assert.equal(agentxHubSkillRowActions({ id: 'fork_x', sourceType: 'text', forkedFrom: { slug: 'mine', version: '1.0.0' } }, 'vi'), '', 'a fork is an ordinary text skill: upstream Edit · Remove');
     assert.equal(agentxHubSkillRowActions({ id: 'plain', sourceType: 'text' }, 'vi'), '');
@@ -827,27 +827,27 @@ test('the Settings card labels hub records, renders search results and installed
       clientOptions: { service: signedInService, fetchImpl: async () => jsonResponse({ skills: [{ slug: 'vneb-portal', name: 'vneb-portal', description: 'Tra cứu VNEB', latest_version: '1.1.0', visibility: 'private', scan: { verdict: 'safe' }, owner: { slug: 'astralx' }, downloads: 3 }, { slug: 'other', name: 'Other', description: '', latest_version: '2.0.0', visibility: 'public', scan: { verdict: 'caution' } }], next_cursor: null }) },
     });
     await controller.initialize();
-    assert.match(root.innerHTML, /AgentX Skill Hub/);
+    assert.match(root.innerHTML, /AgentX AgentHub/);
     // The catalogue answers on open — nobody should have to press Tìm to
     // find out whether the hub has anything.
     assert.match(root.innerHTML, /Danh mục kỹ năng/);
     assert.match(root.innerHTML, /data-hub-result="vneb-portal"/, 'the catalogue is listed before any search');
-    assert.match(root.innerHTML, /Đã cài từ hub trên trình duyệt này/, 'and the second list says it is about this browser');
+    assert.match(root.innerHTML, /Đã cài từ AgentHub trên trình duyệt này/, 'and the second list says it is about this browser');
     assert.match(root.innerHTML, /Đang đăng nhập: user-123/);
     assert.match(root.innerHTML, /data-hub-installed="vneb-portal"/);
-    assert.match(root.innerHTML, /Từ AgentX Hub · vneb-portal/);
+    assert.match(root.innerHTML, /Từ AgentX AgentHub · vneb-portal/);
     assert.match(root.innerHTML, /đã sửa tay/, 'the edited copy is flagged');
     assert.match(root.innerHTML, /có bản v1\.1\.0/, 'and told a newer version exists');
-    assert.match(root.innerHTML, /data-hub-action="reinstall" data-hub-slug="mine"[^>]*>Khôi phục bản hub</, 'and offered the hub version back');
+    assert.match(root.innerHTML, /data-hub-action="reinstall" data-hub-slug="mine"[^>]*>Khôi phục bản AgentHub</, 'and offered the hub version back');
     assert.doesNotMatch(root.innerHTML, /data-hub-action="reinstall" data-hub-slug="vneb-portal"/, 'a hub record has nothing to restore');
-    assert.match(root.innerHTML, /bị sửa ngoài WebMate — đã khôi phục bản hub/, 'a repair is shown');
+    assert.match(root.innerHTML, /bị sửa ngoài WebMate — đã khôi phục bản AgentHub/, 'a repair is shown');
     assert.match(root.innerHTML, /chỉ đọc/, 'the card says hub skills are read-only');
     assert.match(root.innerHTML, /data-hub-parked="parked-one"/);
-    assert.match(root.innerHTML, /hub đã tắt — yanked/);
+    assert.match(root.innerHTML, /AgentHub đã tắt — yanked/);
     assert.match(root.innerHTML, /Dùng chung trong workspace của bạn/, 'the workspace section replaced the organisation one');
     assert.match(root.innerHTML, /data-hub-workspace="doi-dev"[^>]*><strong>Đội Dev<\/strong>: Team portal v1\.0\.0/);
     assert.doesNotMatch(root.innerHTML, /data-hub-workspace="qa"/, 'a workspace sharing nothing of this kind is not named for nothing');
-    assert.match(root.innerHTML, target === 'chrome' ? /Cài một chạm từ trang hub: sẵn sàng/ : /không có kênh cài một chạm/);
+    assert.match(root.innerHTML, target === 'chrome' ? /Cài một chạm từ trang AgentHub: sẵn sàng/ : /không có kênh cài một chạm/);
     await controller.search('vneb');
     assert.match(root.innerHTML, /data-hub-result="vneb-portal"/);
     assert.match(root.innerHTML, /Cập nhật lên v1\.1\.0/, 'installed at 1.0.0, hub at 1.1.0 → update');
@@ -935,7 +935,7 @@ test('the enabled-skills row actions go through the background: view and edit st
   await click(remove);
   assert.deepEqual(messages.at(-1), ['agentx_hub_uninstall', { slug: 'vneb-portal' }]);
   assert.equal(notes.at(-1)[0], 'fail');
-  assert.match(notes.at(-1)[1], /Không kết nối được hub/);
+  assert.match(notes.at(-1)[1], /Không kết nối được AgentHub/);
   assert.equal(remove.disabled, false, 're-enabled after a failure so the person can retry');
 });
 

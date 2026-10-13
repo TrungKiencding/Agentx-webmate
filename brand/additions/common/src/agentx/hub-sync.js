@@ -1,4 +1,4 @@
-// Desired-state sync between the AgentX Skill Hub and WebMate's custom
+// Desired-state sync between the AgentX AgentHub and WebMate's custom
 // skills (plan Phase 4, items 3 and 4).
 //
 // The hub's `/v1/me/changes?product=webmate` snapshot is the source of truth.

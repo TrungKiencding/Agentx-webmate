@@ -1,4 +1,4 @@
-/* AgentX Skill Hub card in Settings → Skills (plan Phase 4 item 5).
+/* AgentX AgentHub card in Settings → Skills (plan Phase 4 item 5).
  * Reuses the account-connection tokens from agentx-cloud.css. */
 .ax-hub { display: flex; flex-direction: column; gap: var(--ax-cloud-space-sm, 0.75rem); }
 .ax-hub-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ax-cloud-space-md, 1rem); }

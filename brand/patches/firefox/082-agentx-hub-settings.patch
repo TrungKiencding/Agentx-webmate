@@ -47,7 +47,7 @@ diff --git a/src/ui/settings.js b/src/ui/settings.js
      renderAgentXCloudMultimodalSettings();
    },
  });
-+// AgentX Skill Hub card under Settings → Skills (plan Phase 4 item 5).
++// AgentX AgentHub card under Settings → Skills (plan Phase 4 item 5).
 +const agentxHubController = createAgentXHubSettingsController({
 +  api: globalThis.browser,
 +  root: document.getElementById('agentx-hub-card'),
@@ -101,7 +101,7 @@ diff --git a/src/ui/settings.js b/src/ui/settings.js
    skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
      btn.addEventListener('click', () => enterSkillEdit(btn.dataset.skillEditId));
    });
-+  // Records from the AgentX Skill Hub are read-only: their rows carry
++  // Records from the AgentX AgentHub are read-only: their rows carry
 +  // View · Fork to edit · Remove instead (plan §8 decision 9), and those go
 +  // through the background like the hub card's own actions.
 +  bindAgentXHubSkillRowActions(skillsList, { locale: getLocale, sendToBackground, preview: previewEnabledSkill, edit: enterSkillEdit, notify: flashSkillsResult });

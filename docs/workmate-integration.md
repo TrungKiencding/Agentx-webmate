@@ -352,7 +352,7 @@ What WebMate does with it (`brand/additions/common/src/agentx/license.js`,
   | Workmate-driven bridge runs (Chrome) | Refused before anything happens — see below. |
 
   Not AI, so untouched: model lists, context-window and vision-capability
-  metadata, the gateway key probe, the Skill Hub sync. The gate fails open —
+  metadata, the gateway key probe, the AgentHub sync. The gate fails open —
   no session, no license known, a license service that is down — exactly
   like everything else here; the gateway blocking the key stays the hard
   stop.

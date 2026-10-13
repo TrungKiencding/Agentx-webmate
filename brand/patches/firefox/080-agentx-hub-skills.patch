@@ -14,7 +14,7 @@ diff --git a/src/agent/skills.js b/src/agent/skills.js
    ];
  }
  
-+// AgentX Skill Hub provenance (brand layer, plan Phase 4 item 2). A record
++// AgentX AgentHub provenance (brand layer, plan Phase 4 item 2). A record
 +// installed from the hub keeps the slug, the version and the content hash it
 +// was rendered from, so hub-sync can tell "same version" from "newer on the
 +// hub", plus the hash of its own stored content (renderHash) so hub-sync can
@@ -71,7 +71,7 @@ diff --git a/src/agent/skills.js b/src/agent/skills.js
    if (!contentChanged && !nameChanged) {
      return { skills, skill: existing, changed: false, demoted: false };
    }
-+  // A record from the AgentX Skill Hub is read-only (plan §8 decision 9): the
++  // A record from the AgentX AgentHub is read-only (plan §8 decision 9): the
 +  // hub is its source of truth, and hub-sync would put the hub's copy back on
 +  // the next pass anyway. "Fork to edit" makes a plain-text copy instead.
 +  if (existing.sourceType === 'hub') {

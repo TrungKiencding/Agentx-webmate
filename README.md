@@ -29,7 +29,7 @@ Tiện ích làm việc trong trình duyệt bạn đang sử dụng, với phi�
 - **Lịch và theo dõi:** hẹn tác vụ hoặc theo dõi trang theo một điều kiện.
 - **Skills:** bổ sung hướng dẫn và công cụ cho các tác vụ chuyên biệt.
 - **Lựa chọn mô hình:** kết nối các nhà cung cấp AI hoặc máy chủ mô hình cục bộ tương thích OpenAI.
-- **Tích hợp AgentX:** đăng nhập AgentX, kết nối Skill Hub và phối hợp với AgentX Workmate.
+- **Tích hợp AgentX:** đăng nhập AgentX, kết nối AgentX AgentHub và phối hợp với AgentX Workmate.
 
 ## Cài đặt từ mã nguồn
 

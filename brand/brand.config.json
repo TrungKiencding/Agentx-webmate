@@ -31,7 +31,7 @@
       "http://127.0.0.1:47823/callback"
     ],
     "sessionIdleTimeoutMs": 691200000,
-    "_skillHubBaseUrl_why": "AgentX Skill Hub (plan §8 decision 2). Also the only origin allowed to message the extension (externally_connectable, Chrome/Edge) — scripts/brand-build.mjs derives both from this value.",
+    "_skillHubBaseUrl_why": "AgentX AgentHub (plan §8 decision 2). Also the only origin allowed to message the extension (externally_connectable, Chrome/Edge) — scripts/brand-build.mjs derives both from this value.",
     "skillHubBaseUrl": "https://agenthub.astralx.com.vn/"
   },
 

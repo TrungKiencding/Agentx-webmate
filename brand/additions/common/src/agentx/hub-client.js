@@ -1,4 +1,4 @@
-// AgentX Skill Hub client for WebMate (plan Phase 4, item 1).
+// AgentX AgentHub client for WebMate (plan Phase 4, item 1).
 //
 // One place that knows how the extension talks to the hub: the base URL
 // (build-time default, storage override for a local hub), the bearer (the
@@ -225,7 +225,7 @@ export function createAgentXHubClient({
       if (error?.name === 'AbortError') {
         throw new AgentXHubError('request_timeout', `Hub không trả lời trong ${Math.round(timeoutMs / 1000)} giây.`, { transient: true });
       }
-      throw new AgentXHubError('network_unavailable', 'Không kết nối được AgentX Skill Hub.', { transient: true, detail: String(error?.message || error) });
+      throw new AgentXHubError('network_unavailable', 'Không kết nối được AgentX AgentHub.', { transient: true, detail: String(error?.message || error) });
     } finally {
       clearTimeout(timer);
     }

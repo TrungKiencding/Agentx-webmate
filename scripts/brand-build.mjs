@@ -257,7 +257,7 @@ async function rewriteManifest(outDir, config, target) {
   }
   assertExtensionIdMatchesKey(manifest, p, target);
 
-  // AgentX Skill Hub one-click install (plan Phase 4 item 4): only the hub's
+  // AgentX AgentHub one-click install (plan Phase 4 item 4): only the hub's
   // own origin may message the extension. Firefox has no externally_connectable
   // (it falls back to polling + "Import from URL"), so this is Chrome-only.
   // AGENTX_HUB_EXTRA_ORIGINS=http://127.0.0.1:4173,… adds dev/e2e origins to a
