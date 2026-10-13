@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.0.11",
-  "publishedAt": "2026-10-11T20:57:10.736Z",
+  "version": "1.0.12",
+  "publishedAt": "2026-10-13T15:20:00.157Z",
   "chrome": {
-    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.11/agentx-webmate-chrome-1.0.11.zip",
-    "sha256": "bc4fadbb29845d0f4ca6b347f964b12135cf13a5ea3e8456f82f3bab2c6e4925",
-    "bytes": 5209016
+    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.12/agentx-webmate-chrome-1.0.12.zip",
+    "sha256": "16a3f588a1ed90c401d681095271074908772d46132e84be8f3177cef789763b",
+    "bytes": 5209026
   },
   "minWorkmate": "0.21.0",
   "minProtocol": 3,
   "notes": {
-    "vi": "### Fixed\n- Count successful plan-only output as successful planning, preserve the first start time when tracing is disabled, and bound concurrent metric deliveries.\n- Read the current persisted account for metrics without refreshing or changing sign-in, preventing collection from interfering with authentication or using a stale account.",
-    "en": "### Fixed\n- Count successful plan-only output as successful planning, preserve the first start time when tracing is disabled, and bound concurrent metric deliveries.\n- Read the current persisted account for metrics without refreshing or changing sign-in, preventing collection from interfering with authentication or using a stale account."
+    "vi": "### Fixed\n- Side-panel chats are now reported to the AgentX SSO usage dashboard. Streamed ask-mode turns were never counted, so AgentX WebMate did not appear among the dashboard's products.\n\n### Changed\n- AgentX Skill Hub is now called AgentX AgentHub (AgentHub for short) in Settings and its messages. Installed skills and saved hub addresses carry over unchanged.",
+    "en": "### Fixed\n- Side-panel chats are now reported to the AgentX SSO usage dashboard. Streamed ask-mode turns were never counted, so AgentX WebMate did not appear among the dashboard's products.\n\n### Changed\n- AgentX Skill Hub is now called AgentX AgentHub (AgentHub for short) in Settings and its messages. Installed skills and saved hub addresses carry over unchanged."
   },
-  "signature": "ed25519:q4VNt51XGiL+NCmITA+DfJoIhibogK3O06i44AGUFK02RRmy8dfph1O7zxwwWo+FzkHR47Rner9vzmRpfd07CQ=="
+  "signature": "ed25519:MS61SGuRxb7aYRy1RTBQZbUbqYLduFy7DMtcB/0HizPckEFuIzVWXyzjwh/pYTrt5qU0l+wPThbI9cW4boSbCg=="
 }
