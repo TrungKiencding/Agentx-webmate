@@ -5,7 +5,11 @@ import {
   AGENTX_SESSION_STORAGE_KEY,
 } from "../brand-dist/chrome/src/agentx/cloud-service.js";
 import { webcrypto } from "node:crypto";
-import { createUsageReporter } from "../brand/additions/common/src/agentx/telemetry.js";
+import {
+  createUsageReporter,
+  errorCode,
+  statusCode,
+} from "../brand/additions/common/src/agentx/telemetry.js";
 let session = {
   user: { subject: "alice" },
   accessToken: "synthetic-access",
@@ -61,15 +65,18 @@ const plan = createUsageReporter({
     return new Response("", { status: 202 });
   },
 });
-plan.begin(8, "plan");
-elapsed = 400;
 plan.begin(8, "act");
+elapsed = 400;
+plan.begin(8, "act"); // already open: the first begin keeps the clock
 elapsed = 800;
 assert.equal(await plan.end(8, "plan_only_output"), true);
 const planned = JSON.parse(calls.at(-1).init.body).events[0];
-assert.equal(planned.feature, "agent.plan");
+assert.equal(planned.feature, "agent.run");
 assert.equal(planned.outcome, "success");
 assert.equal(planned.duration_ms, 800);
+plan.begin(9, "dev"); // dev is an action mode too
+assert.equal(await plan.end(9, "done"), true);
+assert.equal(JSON.parse(calls.at(-1).init.body).events[0].feature, "agent.run");
 const server = createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => (body += chunk));
@@ -101,6 +108,84 @@ try {
 console.log(
   "WebMate telemetry: lifecycle, account isolation, real HTTP, bearer and metadata passed",
 );
+
+// What a turn ended with, in the words AgentX Chat and Workmate use.
+for (const status of [
+  "done",
+  "plan_only_output",
+  "clarify",
+  "clarification_required",
+  "captcha_manual_required",
+  "read_scope_limited",
+  "active_recipient_unverified",
+]) {
+  assert.equal(statusCode(status), null, `${status} is not a failure`);
+}
+assert.equal(statusCode("cancelled"), null);
+assert.equal(statusCode("max_steps"), "max_steps");
+assert.equal(statusCode("loop_stopped"), "loop_stopped");
+assert.equal(statusCode("cost_limit"), "cost_limit");
+assert.equal(statusCode("empty_output"), "empty_response");
+assert.equal(statusCode("placeholder_output"), "empty_response");
+assert.equal(statusCode("delivery_required"), "observation_limit");
+assert.equal(statusCode("error"), "operation_failed");
+assert.equal(statusCode("error", "rate_limited"), "rate_limited");
+assert.equal(statusCode("max_steps", "upstream_error"), "max_steps"); // not the error a retry got past
+assert.equal(statusCode("not a status!"), "operation_failed");
+const failure = (fields) => Object.assign(new Error("private detail"), fields);
+assert.equal(errorCode(failure({ status: 429 }), "RATE_LIMIT"), "rate_limited");
+assert.equal(errorCode(failure({}), "QUOTA"), "quota_exceeded");
+assert.equal(errorCode(failure({}), "INVALID_CREDENTIAL"), "auth_failed");
+assert.equal(errorCode(failure({}), "CONTEXT_WINDOW_EXCEEDED"), "context_too_long");
+assert.equal(errorCode(failure({}), "COST_LIMIT"), "cost_limit");
+assert.equal(errorCode(failure({ status: 502 }), "TRANSPORT"), "upstream_error");
+assert.equal(errorCode(failure({ status: 404 }), "TRANSPORT"), "model_unavailable");
+assert.equal(errorCode(failure({ name: "TimeoutError" }), "TRANSPORT"), "timeout");
+assert.equal(errorCode(new TypeError("Failed to fetch"), "TRANSPORT"), "network_error");
+assert.equal(errorCode(failure({}), "TRANSPORT"), "operation_failed");
+assert.equal(
+  errorCode(failure({ code: "license_read_only", license: { state: "expired" } })),
+  "license_expired",
+);
+assert.equal(
+  errorCode(failure({ code: "license_read_only", license: { state: "none" } })),
+  "license_required",
+);
+assert.equal(errorCode(failure({ code: "access_blocked", status: 403 })), "access_blocked");
+
+const coded = [];
+const codes = createUsageReporter({
+  cloud: { telemetrySession: async () => session },
+  api,
+  fetchImpl: async (url, init) => {
+    coded.push(JSON.parse(init.body).events[0]);
+    return new Response("", { status: 202 });
+  },
+});
+codes.begin(40, "ask");
+codes.failure(40, failure({ status: 500 }), "TRANSPORT");
+codes.failure(40, failure({ status: 429 }), "RATE_LIMIT"); // the error that ended the turn names it
+assert.equal(await codes.end(40, "error"), true);
+codes.begin(41, "act");
+codes.failure(41, failure({ status: 502 }), "TRANSPORT"); // retried, then the run ran out of steps
+assert.equal(await codes.end(41, "max_steps"), true);
+codes.begin(42, "ask");
+assert.equal(await codes.end(42, "clarification_required"), true);
+// Refused before the run started (read-only license): counted, with why.
+assert.equal(
+  await codes.refused(failure({ code: "license_read_only", license: { state: "revoked" } })),
+  true,
+);
+assert.deepEqual(
+  coded.map((event) => [event.feature, event.outcome, event.error_code ?? null]),
+  [
+    ["chat.turn", "failure", "rate_limited"],
+    ["agent.run", "failure", "max_steps"],
+    ["chat.turn", "success", null],
+    ["chat.turn", "failure", "license_revoked"],
+  ],
+);
+console.log("WebMate telemetry: outcomes and error codes in the shared words passed");
 
 let consent = false;
 const firefox = createUsageReporter({
@@ -200,6 +285,7 @@ for (const target of ["chrome", "firefox"]) {
     const seen = [];
     agent.usageReporter = {
       begin: (key, mode) => seen.push(["begin", key, mode]),
+      failure: (key, error, traceCode) => seen.push(["failure", key, traceCode]),
       end: async (key, status) => {
         seen.push(["end", key, status]);
         return true;
@@ -228,3 +314,61 @@ for (const target of ["chrome", "firefox"]) {
   }
 }
 console.log("WebMate telemetry: ask-mode turns report, streaming and not, Chrome and Firefox builds passed");
+
+// A turn that throws tells the reporter which error ended it, before its end.
+for (const target of ["chrome", "firefox"]) {
+  const { Agent } = await import(`../brand-dist/${target}/src/agent/agent.js`);
+  for (const streaming of [false, true]) {
+    const refusal = Object.assign(new Error("Too many requests"), { status: 429 });
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: "full",
+      contextWindow: 128000,
+      model: "test-model",
+      name: "test-provider",
+      chat: async () => {
+        throw refusal;
+      },
+      // eslint-disable-next-line require-yield
+      async *chatStream() {
+        throw refusal;
+      },
+    };
+    const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = streaming ? 33 : 32;
+    const seen = [];
+    agent.usageReporter = {
+      begin: (key, mode) => seen.push(["begin", key, mode]),
+      failure: (key, error, traceCode) => seen.push(["failure", key, traceCode, error === refusal]),
+      end: async (key, status) => {
+        seen.push(["end", key, status]);
+        return true;
+      },
+    };
+    agent.planBeforeAct = false;
+    agent.maxSteps = 3;
+    agent._permissionMode = "bypass";
+    agent._hydrate = async () => {};
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: "user", content });
+    agent._maybeReinjectAdapter = async () => {};
+    agent._ensureProgressSessionForCurrentTask = async () => ({ mode: "inactive" });
+    agent._persist = () => {};
+    agent._persistNow = async () => true;
+    agent._startTraceRun = async () => null;
+    agent.conversationModes.set(tabId, "ask");
+    agent.conversations.set(tabId, [{ role: "system", content: "sys" }]);
+    const turn = streaming
+      ? agent.processMessageStream(tabId, "Hello", () => {}, "ask")
+      : agent.processMessage(tabId, "Hello", () => {}, "ask");
+    await turn.catch(() => {});
+    const label = `${target} ${streaming ? "streaming" : "non-streaming"} failed ask turn`;
+    assert.deepEqual(
+      seen,
+      [["begin", tabId, "ask"], ["failure", tabId, "RATE_LIMIT", true], ["end", tabId, "error"]],
+      label,
+    );
+  }
+}
+console.log("WebMate telemetry: a failed turn reports its error, streaming and not, Chrome and Firefox builds passed");

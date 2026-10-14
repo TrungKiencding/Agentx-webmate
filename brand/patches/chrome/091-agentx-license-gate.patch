@@ -17,7 +17,7 @@ diff --git a/src/background.js b/src/background.js
  } from './recorder/host.js';
  import { RUN_CAPTURE_START_ERROR_PREFIX, createRunCaptureController } from './run-capture.js';
  import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-@@ -180,7 +182,16 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
+@@ -180,7 +182,22 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
      || scheduler.isRunning(tabId)
      || cloudRunController.isRunning(tabId),
  });
@@ -28,14 +28,20 @@ diff --git a/src/background.js b/src/background.js
 +// below (scheduled jobs, memory extraction, compaction, connection tests,
 +// transcription, bridge runs).
 +const agentxLicense = createAgentXLicenseGate({ api: chrome, locale: () => selectionShortcutLocale });
-+agent.setRunStartGuard(async (tabId) => {
++agent.setRunStartGuard(async (tabId, entry) => {
 +  await teacherRunInterlock.guardRunStart(tabId);
-+  await agentxLicense.assertAllowed();
++  try {
++    await agentxLicense.assertAllowed();
++  } catch (error) {
++    // A turn the person asked for and could not have: counted, with why (usage metrics).
++    if (entry?.kind === 'interactive') void agent.usageReporter?.refused(error)?.catch(() => {});
++    throw error;
++  }
 +});
  installDownloadDirectoryRouting(chrome);
  
  async function playWatchAlert({ style = 'default' } = {}) {
-@@ -216,14 +227,23 @@ const scheduler = new ScheduledJobManager({
+@@ -216,14 +233,23 @@ const scheduler = new ScheduledJobManager({
    showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
    hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
    playWatchAlert,
@@ -59,7 +65,7 @@ diff --git a/src/background.js b/src/background.js
  
  const runCaptureController = createRunCaptureController({
    api: chrome,
-@@ -239,6 +259,9 @@ const cloudRunController = createCloudRunController({
+@@ -239,6 +265,9 @@ const cloudRunController = createCloudRunController({
    startRecording: startTabRecording,
    stopRecording: stopTabRecording,
    workflowTrace,
@@ -69,7 +75,7 @@ diff --git a/src/background.js b/src/background.js
  });
  alwaysAllowApiMutationsReady
    .then(() => cloudRunController.syncBridge())
-@@ -799,6 +822,9 @@ async function drainUserMemoryExtractionQueue() {
+@@ -799,6 +828,9 @@ async function drainUserMemoryExtractionQueue() {
          await removeUserMemoryExtractionJob(job.id);
          continue;
        }
@@ -79,7 +85,7 @@ diff --git a/src/background.js b/src/background.js
  
        try {
          await customSkillsReady;
-@@ -2339,7 +2365,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+@@ -2339,7 +2371,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
  
    handleMessage(msg, sender)
      .then(sendResponse)
@@ -95,7 +101,7 @@ diff --git a/src/background.js b/src/background.js
  
    return true; // async response
  });
-@@ -3085,6 +3118,8 @@ async function handleMessage(msg, sender) {
+@@ -3085,6 +3124,8 @@ async function handleMessage(msg, sender) {
      case 'compact_conversation': {
        const tabId = msg.tabId || sender.tab?.id;
        if (!tabId) return { ok: false, error: 'No tab ID' };
@@ -104,7 +110,7 @@ diff --git a/src/background.js b/src/background.js
        return { ok: true, ...(await agent.compactConversation(tabId)) };
      }
  
-@@ -3455,13 +3490,22 @@ async function handleMessage(msg, sender) {
+@@ -3455,13 +3496,22 @@ async function handleMessage(msg, sender) {
      }
  
      case 'test_provider': {
@@ -276,7 +282,7 @@ diff --git a/src/agent/scheduler.js b/src/agent/scheduler.js
 diff --git a/src/recorder/host.js b/src/recorder/host.js
 --- a/src/recorder/host.js
 +++ b/src/recorder/host.js
-@@ -54,11 +54,29 @@ function normalizeRecordingFilename(value) {
+@@ -55,11 +55,29 @@ function normalizeRecordingFilename(value) {
  }
  
  let providerManagerRef = null;
@@ -306,7 +312,7 @@ diff --git a/src/recorder/host.js b/src/recorder/host.js
  export function getRecordingState() {
    return recordingState;
  }
-@@ -588,6 +606,11 @@ export async function stopTabRecording(opts = {}) {
+@@ -589,6 +607,11 @@ export async function stopTabRecording(opts = {}) {
  }
  
  async function runTranscription({ dataUrl, mimeType, baseFilename }) {
