@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.0.12",
-  "publishedAt": "2026-10-13T15:20:00.157Z",
+  "version": "1.0.13",
+  "publishedAt": "2026-10-14T01:56:29.679Z",
   "chrome": {
-    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.12/agentx-webmate-chrome-1.0.12.zip",
-    "sha256": "16a3f588a1ed90c401d681095271074908772d46132e84be8f3177cef789763b",
-    "bytes": 5209026
+    "url": "https://github.com/astralxkienlt/agentx-webmate/releases/download/v1.0.13/agentx-webmate-chrome-1.0.13.zip",
+    "sha256": "80d5c46e5bab0b7f0b55d87c1ca6a339fe29b8c54637482d5c31cfc05e920f5a",
+    "bytes": 5208514
   },
   "minWorkmate": "0.21.0",
   "minProtocol": 3,
   "notes": {
-    "vi": "### Fixed\n- Side-panel chats are now reported to the AgentX SSO usage dashboard. Streamed ask-mode turns were never counted, so AgentX WebMate did not appear among the dashboard's products.\n\n### Changed\n- AgentX Skill Hub is now called AgentX AgentHub (AgentHub for short) in Settings and its messages. Installed skills and saved hub addresses carry over unchanged.",
-    "en": "### Fixed\n- Side-panel chats are now reported to the AgentX SSO usage dashboard. Streamed ask-mode turns were never counted, so AgentX WebMate did not appear among the dashboard's products.\n\n### Changed\n- AgentX Skill Hub is now called AgentX AgentHub (AgentHub for short) in Settings and its messages. Installed skills and saved hub addresses carry over unchanged."
+    "vi": "### Changed\n- The service that issues WebMate's AI key is now called the AI keys service (\"Dịch vụ khóa AI\") in Settings and on the sign-in screen, the name it has in AgentX SSO. Its address, the stored key and this device's identity are unchanged, so nobody signs in again or receives a new key.",
+    "en": "### Changed\n- The service that issues WebMate's AI key is now called the AI keys service (\"Dịch vụ khóa AI\") in Settings and on the sign-in screen, the name it has in AgentX SSO. Its address, the stored key and this device's identity are unchanged, so nobody signs in again or receives a new key."
   },
-  "signature": "ed25519:MS61SGuRxb7aYRy1RTBQZbUbqYLduFy7DMtcB/0HizPckEFuIzVWXyzjwh/pYTrt5qU0l+wPThbI9cW4boSbCg=="
+  "signature": "ed25519:CpG70MPh7ZDk5eUwG4q/6KRgnd4j1sc8xznLjZI5SUKPyEDr+piebtlu1SIBEd7l82OrXq7PT2AR/AuOUVkTDQ=="
 }
