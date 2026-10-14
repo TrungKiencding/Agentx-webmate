@@ -225,7 +225,7 @@ Build cho hub cục bộ: `AGENTX_HUB_EXTRA_ORIGINS=http://127.0.0.1:5173 npm ru
 
 ## Giấy phép AgentX
 
-Một giấy phép AgentX dùng chung cho Workmate, WebMate và Chat. SSO quyết định, dịch vụ khoá (`secondBrainBaseUrl`) báo lại qua `GET /v1/license` và trong mọi câu trả lời của `/v1/model-key`. Chỉ `license.access` quyết định chặn: `read_only` thì khoá. Hợp đồng đầy đủ và những gì WebMate làm với nó: mục *AgentX license* trong `docs/workmate-integration.md`.
+Một giấy phép AgentX dùng chung cho Workmate, WebMate và Chat. SSO quyết định, dịch vụ khoá AI (`services.keysBaseUrl`) báo lại qua `GET /v1/license` và trong mọi câu trả lời của `/v1/model-key`. Chỉ `license.access` quyết định chặn: `read_only` thì khoá. Hợp đồng đầy đủ và những gì WebMate làm với nó: mục *AgentX license* trong `docs/workmate-integration.md`.
 
 | Chỗ | Nội dung |
 |---|---|

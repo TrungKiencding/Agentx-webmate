@@ -61,12 +61,11 @@ const ISSUER = 'https://identity.example.test/realms/agentx';
 const CLIENT_ID = 'agentx-workmate';
 const TOKEN_ENDPOINT = `${ISSUER}/protocol/openid-connect/token`;
 const CONFIG = Object.freeze({
-  secondBrainBaseUrl: 'https://agentx.astralx.com.vn/keys',
+  keysBaseUrl: 'https://agentx.astralx.com.vn/keys',
   litellmBaseUrl: 'https://aigw.dev-server.cloud/v1',
   oidcIssuer: ISSUER,
   oidcClientId: CLIENT_ID,
   oidcScopes: 'openid profile email',
-  oidcProvidersPath: '/api/auth/providers',
   oidcRedirectUris: ['http://127.0.0.1:47821/callback'],
   requestTimeoutMs: 250,
   authTimeoutMs: 1_000,
@@ -119,7 +118,7 @@ function session(overrides = {}) {
 function credential(overrides = {}) {
   return {
     subject: 'user-123',
-    authority: CONFIG.secondBrainBaseUrl,
+    authority: CONFIG.keysBaseUrl,
     key: 'sk-existing-secret',
     baseUrl: CONFIG.litellmBaseUrl,
     models: ['model-a'],
@@ -292,7 +291,6 @@ test('authorization code + PKCE uses ID token and provisions the configured gate
   let authUrl;
   let modelRequest;
   let tokenRequest;
-  let providersRequested = false;
   const fake = createApi({}, {
     onTabCreated(tab, events) {
       authUrl = new URL(tab.url);
@@ -304,21 +302,6 @@ test('authorization code + PKCE uses ID token and provisions the configured gate
   });
   const fetchImpl = async (url, init = {}) => {
     const requestUrl = String(url);
-    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/api/auth/providers`) {
-      providersRequested = true;
-      return jsonResponse({
-        providers: [{
-          name: 'keycloak',
-          supports_native_oidc: true,
-          native_oidc: {
-            issuer: ISSUER,
-            client_id: CLIENT_ID,
-            scopes: 'openid profile email',
-            confidential: false,
-          },
-        }],
-      });
-    }
     if (requestUrl === `${ISSUER}/.well-known/openid-configuration`) {
       return jsonResponse({
         issuer: ISSUER,
@@ -344,7 +327,7 @@ test('authorization code + PKCE uses ID token and provisions the configured gate
         refresh_token: 'refresh-1',
       });
     }
-    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/v1/model-key`) {
+    if (requestUrl === `${CONFIG.keysBaseUrl}/v1/model-key`) {
       modelRequest = init;
       return jsonResponse({
         key: 'sk-new-secret',
@@ -370,11 +353,15 @@ test('authorization code + PKCE uses ID token and provisions the configured gate
   assert.ok(tokenForm.get('code_verifier'));
   assert.equal(authUrl.searchParams.get('code_challenge_method'), 'S256');
   assert.equal(authUrl.searchParams.get('client_id'), CONFIG.oidcClientId);
-  assert.equal(providersRequested, false);
+  // The keys service wire contract, byte for byte: POST, JSON {"rotate":false},
+  // the ID token as bearer, and both device headers.
+  assert.equal(modelRequest.method, 'POST');
+  assert.equal(modelRequest.body, '{"rotate":false}');
+  assert.equal(modelRequest.headers['Content-Type'], 'application/json');
   assert.equal(modelRequest.headers.Authorization, `Bearer ${result.session.idToken}`);
   assert.notEqual(modelRequest.headers.Authorization, 'Bearer must-not-be-used');
-  assert.deepEqual(JSON.parse(modelRequest.body), { rotate: false });
   assert.match(modelRequest.headers['X-AgentX-Device'], /^[0-9a-f-]{36}$/);
+  assert.equal(modelRequest.headers['X-AgentX-Device-Name'], 'AgentX WebMate macOS');
   assert.equal(result.credential.baseUrl, CONFIG.litellmBaseUrl);
   assert.equal(result.credential.model, 'model-a');
   assert.equal(fake.values[AGENTX_SESSION_STORAGE_KEY].user.email, 'kien@example.test');
@@ -410,7 +397,7 @@ function ssoFetch({ onAuthorize, onToken, onModelKey } = {}) {
         refresh_token: `refresh-for-${form.get('code')}`,
       });
     }
-    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/v1/model-key`) {
+    if (requestUrl === `${CONFIG.keysBaseUrl}/v1/model-key`) {
       onModelKey?.(init);
       return jsonResponse({
         key: 'sk-silent-secret',
@@ -555,7 +542,7 @@ test('the chat picker is the key service chat list, as far as LiteLLM serves it'
   let modelKeyRequestBody;
   const result = await service(fake.api, async (url, init = {}) => {
     const requestUrl = String(url);
-    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/v1/model-key`) {
+    if (requestUrl === `${CONFIG.keysBaseUrl}/v1/model-key`) {
       modelKeyRequestBody = JSON.parse(init.body);
       return jsonResponse({
         key: 'sk-legacy-key',
@@ -621,7 +608,7 @@ const ROLE_CATALOG = Object.freeze({
 function roleFetch({ onKey, catalog = ROLE_CATALOG, keyBody = ROLE_KEY_BODY } = {}) {
   return async (url) => {
     const requestUrl = String(url);
-    if (requestUrl === `${CONFIG.secondBrainBaseUrl}/v1/model-key`) {
+    if (requestUrl === `${CONFIG.keysBaseUrl}/v1/model-key`) {
       onKey?.();
       return jsonResponse(keyBody);
     }
@@ -731,7 +718,6 @@ test('a grant refresh that fails keeps the chat list the record already had', as
 
 test('callback state is validated before OAuth errors or token exchange', async () => {
   let tokenRequested = false;
-  let providersRequested = false;
   const fake = createApi({}, {
     onTabCreated(tab, events) {
       const callback = new URL(CONFIG.oidcRedirectUris[0]);
@@ -741,18 +727,6 @@ test('callback state is validated before OAuth errors or token exchange', async 
     },
   });
   const fetchImpl = async (url) => {
-    if (String(url) === `${CONFIG.secondBrainBaseUrl}/api/auth/providers`) {
-      providersRequested = true;
-      return jsonResponse({
-        providers: [{
-          native_oidc: {
-            issuer: ISSUER,
-            client_id: CLIENT_ID,
-            confidential: false,
-          },
-        }],
-      });
-    }
     if (String(url) === `${ISSUER}/.well-known/openid-configuration`) {
       return jsonResponse({
         issuer: ISSUER,
@@ -768,7 +742,29 @@ test('callback state is validated before OAuth errors or token exchange', async 
     (error) => error.code === 'state_mismatch',
   );
   assert.equal(tokenRequested, false);
-  assert.equal(providersRequested, false);
+});
+
+test('sign-in needs the configured issuer and client ID and asks no service for them', async () => {
+  for (const missing of ['oidcIssuer', 'oidcClientId']) {
+    const requests = [];
+    const fake = createApi({});
+    const cloud = createAgentXCloudService({
+      api: fake.api,
+      config: { ...CONFIG, [missing]: '' },
+      fetchImpl: async (url) => {
+        requests.push(String(url));
+        throw new Error(`Unexpected request: ${url}`);
+      },
+      cryptoImpl: webcrypto,
+      now: () => NOW,
+    });
+    await assert.rejects(
+      () => cloud.signIn(),
+      (error) => error.code === 'invalid_configuration',
+      `${missing} empty`,
+    );
+    assert.deepEqual(requests, [], `${missing} empty: nothing is fetched`);
+  }
 });
 
 test('cached key is reused after one successful LiteLLM probe', async () => {
@@ -785,6 +781,82 @@ test('cached key is reused after one successful LiteLLM probe', async () => {
   assert.equal(result.credential.key, cached.key);
   assert.equal(result.credential.provisionOutcome, 'reused-local');
   assert.deepEqual(requests, [`${CONFIG.litellmBaseUrl}/models`]);
+});
+
+// An installed copy holds what v1.0.12 and earlier stored: a session, a device
+// identity, and a cached key bound (`authority`) to the keys URL that issued
+// it. None of those storage names changed when the config field was renamed,
+// and the URL value must not change either, so the first provisioning after
+// the update reuses all three: no sign-in, no new device, no model-key call.
+test('an install from v1.0.12 keeps its key, device and session on the shipped config', async () => {
+  const stored = {
+    [AGENTX_SESSION_STORAGE_KEY]: session({
+      issuer: 'https://agentx.astralx.com.vn/auth/realms/agent-hub',
+      tokenEndpoint: 'https://agentx.astralx.com.vn/auth/realms/agent-hub/protocol/openid-connect/token',
+      lastActiveAt: NOW - 60_000,
+    }),
+    [AGENTX_DEVICE_STORAGE_KEY]: {
+      id: '6f1c2c7a-9a3e-4a1d-8f0b-2c9d1e5f7a01',
+      name: 'AgentX WebMate macOS',
+      createdAt: NOW - 30 * 86_400_000,
+    },
+    [AGENTX_CREDENTIAL_STORAGE_KEY]: {
+      version: 1,
+      records: [credential({
+        authority: 'https://agentx.astralx.com.vn/keys',
+        baseUrl: 'https://aigw.dev-server.cloud/v1',
+        serviceModels: ['model-a'],
+        featureModels: [],
+        reachableModels: ['model-a'],
+      })],
+    },
+  };
+  const fake = createApi(stored);
+  const requests = [];
+  // No `config` option: the service runs on the generated runtime-config.js,
+  // exactly as the extension does.
+  const cloud = createAgentXCloudService({
+    api: fake.api,
+    fetchImpl: async (url, init = {}) => {
+      const href = String(url);
+      requests.push({ href, method: init.method || 'GET', headers: init.headers || {} });
+      if (href === 'https://aigw.dev-server.cloud/v1/models') {
+        return jsonResponse({ data: [{ id: 'model-a' }] });
+      }
+      if (href === 'https://agentx.astralx.com.vn/keys/v1/license') {
+        return jsonResponse({ license: licenseBody() });
+      }
+      throw new Error(`Unexpected request: ${init.method || 'GET'} ${href}`);
+    },
+    cryptoImpl: webcrypto,
+    now: () => NOW,
+  });
+
+  const result = await cloud.retryProvision();
+  assert.equal(result.credential.key, 'sk-existing-secret');
+  assert.equal(result.credential.provisionOutcome, 'reused-local');
+  const license = await cloud.refreshLicense({ force: true });
+  assert.equal(license.outcome, 'fetched');
+  assert.equal((await cloud.publicStatus()).signedIn, true);
+
+  assert.deepEqual(
+    requests.map(({ method, href }) => `${method} ${href}`),
+    [
+      'GET https://aigw.dev-server.cloud/v1/models',
+      'GET https://agentx.astralx.com.vn/keys/v1/license',
+    ],
+    'only the gateway probe and the license check; never /v1/model-key, never the identity provider',
+  );
+  const licenseHeaders = requests[1].headers;
+  assert.equal(licenseHeaders.Authorization, `Bearer ${stored[AGENTX_SESSION_STORAGE_KEY].idToken}`);
+  assert.equal(licenseHeaders['X-AgentX-Device'], '6f1c2c7a-9a3e-4a1d-8f0b-2c9d1e5f7a01');
+  assert.equal(licenseHeaders['X-AgentX-Device-Name'], 'AgentX WebMate macOS');
+  assert.deepEqual(fake.values[AGENTX_DEVICE_STORAGE_KEY], stored[AGENTX_DEVICE_STORAGE_KEY]);
+  assert.deepEqual(fake.values[AGENTX_SESSION_STORAGE_KEY], stored[AGENTX_SESSION_STORAGE_KEY]);
+  const records = fake.values[AGENTX_CREDENTIAL_STORAGE_KEY].records;
+  assert.equal(records.length, 1);
+  assert.equal(records[0].authority, 'https://agentx.astralx.com.vn/keys');
+  assert.equal(records[0].key, 'sk-existing-secret');
 });
 
 test('cached model selection is replaced when the gateway no longer exposes it', async () => {
@@ -1010,7 +1082,7 @@ test('settings controller installs the key and persists a valid model selection'
   assert.equal(providerState.providers.webbrain_cloud.model, 'model-b');
 
   // Restoring the Cloud session must preserve a still-available user choice
-  // instead of replacing it with Second Brain's first/default model.
+  // instead of replacing it with the keys service's first/default model.
   await controller.initialize();
   const updates = calls.filter((call) => call.action === 'update_provider');
   assert.equal(updates.at(-1).data.config.model, 'model-b');
@@ -1877,7 +1949,25 @@ test('both branded targets gate the side panel and keep Cloud management in sett
     assert.match(settings, /createAgentXCloudSettingsController/);
     assert.match(settings, /renderAgentXCloudMultimodalSettings/);
     assert.doesNotMatch(settings, /btn-manage-billing|api\.webbrain\.one\/account/);
-    assert.match(runtime, /"secondBrainBaseUrl": "https:\/\/agentx\.astralx\.com\.vn\/keys"/);
+    // Exactly these fields reach the extension. keysBaseUrl must keep the
+    // value installed copies bound their cached keys to (the `authority` of
+    // every agentxModelCredentialsV1 record), or each of them fetches its key again.
+    const { AGENTX_RUNTIME_CONFIG: shipped } = await import(
+      pathToFileURL(path.join(root, 'src/agentx/runtime-config.js')).href
+    );
+    assert.deepEqual(Object.keys(shipped).sort(), [
+      'authTimeoutMs',
+      'keysBaseUrl',
+      'litellmBaseUrl',
+      'oidcClientId',
+      'oidcIssuer',
+      'oidcRedirectUris',
+      'oidcScopes',
+      'requestTimeoutMs',
+      'sessionIdleTimeoutMs',
+      'skillHubBaseUrl',
+    ], `${target}: runtime config fields`);
+    assert.equal(shipped.keysBaseUrl, 'https://agentx.astralx.com.vn/keys', `${target}: keys service URL`);
     assert.match(runtime, /https:\/\/aigw\.dev-server\.cloud\/v1/);
     assert.match(runtime, /https:\/\/agentx\.astralx\.com\.vn\/auth\/realms\/agent-hub/);
     assert.match(runtime, /"oidcClientId": "agentx-workmate"/);
@@ -1936,7 +2026,7 @@ test('both branded targets gate the side panel and keep Cloud management in sett
 // everything else is display. An SSO from before licensing answers 404
 // not_found and must leave WebMate exactly as it was.
 
-const KEYS_BASE = CONFIG.secondBrainBaseUrl;
+const KEYS_BASE = CONFIG.keysBaseUrl;
 const LICENSE_URL = `${KEYS_BASE}/v1/license`;
 const MODEL_KEY_URL = `${KEYS_BASE}/v1/model-key`;
 const MODELS_URL = `${CONFIG.litellmBaseUrl}/models`;

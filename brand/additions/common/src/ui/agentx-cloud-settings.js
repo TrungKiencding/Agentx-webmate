@@ -85,7 +85,6 @@ export function createAgentXCloudSettingsController({
     // while none is known (signed out, or an SSO from before licensing).
     license: null,
     configuredLiteLlmBaseUrl: config.litellmBaseUrl,
-    secondBrainBaseUrl: config.secondBrainBaseUrl,
   };
 
   function paint(patch = {}) {

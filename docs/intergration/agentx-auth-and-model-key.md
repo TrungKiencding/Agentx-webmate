@@ -1,4 +1,4 @@
-# AgentX — Đăng nhập Keycloak & cấp model key qua Second Brain
+# AgentX — Đăng nhập Keycloak & cấp model key qua dịch vụ khoá AI
 
 > **File này là instruction để tích hợp, không phải tài liệu nội bộ của AgentX Workmate.**
 > Copy nguyên file vào repo của sản phẩm mới (đặt cạnh `AGENTS.md` / `CLAUDE.md` hoặc trong
@@ -18,7 +18,7 @@ nào?"* — cho nhiều thiết bị của cùng một người, mà thiết b�
                 redirect về loopback 127.0.0.1:{47821|47822|47823}/callback (desktop)
 2. Token      : LẤY id_token (KHÔNG phải access_token) làm bearer cho mọi request nội bộ
 3. Device id  : sinh UUIDv4 một lần cho mỗi INSTALL, lưu cạnh app data, gửi kèm mọi request
-4. Lấy key    : POST {BRAIN}/v1/model-key
+4. Lấy key    : POST {KEYS}/v1/model-key
                 Authorization: Bearer <id_token>
                 X-AgentX-Device: <uuid>
                 body {"rotate": false}
@@ -39,11 +39,11 @@ Bốn thành phần, mỗi thành phần giữ đúng một thứ:
 | Thành phần | Giữ cái gì | Chạy ở đâu |
 |---|---|---|
 | **Keycloak realm** | danh tính người dùng (`sub`, email, name), MFA, SSO | hạ tầng auth có sẵn của tổ chức |
-| **Second Brain service** | 1 model key/người (đã mã hoá), danh sách device, change feed | **một server bạn kiểm soát** |
+| **Dịch vụ khoá AI** (service `keys` của AgentX SSO) | 1 model key/người (đã mã hoá), danh sách device, giấy phép | AgentX SSO, `https://agentx.astralx.com.vn/keys` |
 | **LiteLLM proxy** | các model thật + hạn mức chi tiêu theo key | server nội bộ |
 | **Client app** | token phiên + device id + bản sao key trong `.env` | máy người dùng |
 
-**Admin key của LiteLLM chỉ tồn tại trên Second Brain.** Không bao giờ đóng gói nó vào
+**Admin key của LiteLLM chỉ tồn tại phía AgentX SSO.** Không bao giờ đóng gói nó vào
 installer, không đưa xuống máy client — đó chính là lỗi mà kiến trúc này sinh ra để sửa.
 
 ```mermaid
@@ -53,7 +53,7 @@ sequenceDiagram
     participant App as Client app
     participant B as Trình duyệt hệ thống
     participant KC as Keycloak realm
-    participant SB as Second Brain
+    participant KS as Dịch vụ khoá AI
     participant LL as LiteLLM proxy
 
     U->>App: Mở app
@@ -68,17 +68,17 @@ sequenceDiagram
     KC-->>App: {id_token, refresh_token, expires_in}
     Note over App: bearer = id_token (aud = client_id)
 
-    App->>SB: POST /v1/model-key<br/>Bearer id_token + X-AgentX-Device
-    SB->>KC: verify JWT qua JWKS (iss, aud, exp, alg)
-    SB->>SB: upsert account(sub) + upsert device(sub, device_id)
+    App->>KS: POST /v1/model-key<br/>Bearer id_token + X-AgentX-Device
+    KS->>KC: verify JWT qua JWKS (iss, aud, exp, alg)
+    KS->>KS: upsert account(sub) + upsert device(sub, device_id)
     alt Người này đã có key
-        SB->>SB: đọc row, giải mã AES-256-GCM
-        SB-->>App: {key, base_url, models, default_model, status:"reused"}
+        KS->>KS: đọc row, giải mã AES-256-GCM
+        KS-->>App: {key, base_url, models, default_model, status:"reused"}
     else Lần đầu tiên trong đời
-        SB->>LL: POST /key/generate (bằng admin key)
-        LL-->>SB: {key: "sk-..."} (plaintext chỉ lộ đúng 1 lần)
-        SB->>SB: mã hoá + lưu
-        SB-->>App: {key, ..., status:"issued"}
+        KS->>LL: POST /key/generate (bằng admin key)
+        LL-->>KS: {key: "sk-..."} (plaintext chỉ lộ đúng 1 lần)
+        KS->>KS: mã hoá + lưu
+        KS-->>App: {key, ..., status:"issued"}
     end
     App->>LL: gọi model bằng key vừa nhận (OpenAI-compatible)
 ```
@@ -344,9 +344,11 @@ export const DEVICE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 ---
 
-## 6. Wire contract của Second Brain
+## 6. Wire contract của dịch vụ khoá AI
 
-Base URL do operator cấu hình. Prefix `/v1` là lời hứa tương thích.
+Base URL do operator cấu hình — ở WebMate là `services.keysBaseUrl` trong `brand/brand.config.json`
+(`https://agentx.astralx.com.vn/keys/`). Prefix `/v1` là lời hứa tương thích. Hợp đồng đầy đủ và
+mới nhất nằm cạnh service: `docs/AI-KEYS.md` trong repo AgentX-sso.
 
 ### 6.1 Header dùng chung
 
@@ -367,13 +369,10 @@ kiểm tra thu hồi trong một câu lệnh — không có khe hở giữa lúc
 | `GET` | `/health` | trạng thái từng dependency; 503 **chỉ khi** Postgres chết |
 | `GET` | `/v1/me` | bạn là ai, đang ở máy nào (route rẻ để kiểm tra máy còn được phép không) |
 | `POST` | `/v1/model-key` | **lấy key của người này**, chỉ mint khi họ chưa có |
+| `GET` | `/v1/license` | giấy phép AgentX của người này, cùng header như `/v1/model-key` (mục *AgentX license* trong `docs/workmate-integration.md`) |
 | `POST` | `/v1/devices/heartbeat` | khai platform + app version |
 | `GET` | `/v1/devices` | mọi máy người này từng đăng nhập |
 | `DELETE` | `/v1/devices/{id}?rotate_key=bool` | thu hồi một máy, tuỳ chọn cắt luôn quyền dùng model |
-| `POST` | `/v1/sync/push` | đẩy document đã đổi lên feed |
-| `GET` | `/v1/sync/changes?since=&limit=&kinds=` | một trang của feed, cũ trước |
-| `GET` | `/v1/search?q=` | full-text trên document của chính mình |
-| `WS` | `/v1/sync/stream` | báo có thay đổi (chỉ là cú hích, không mang document) |
 
 ### 6.3 `POST /v1/model-key` — route quan trọng nhất
 
@@ -437,10 +436,9 @@ DELETE /v1/devices/{id}?rotate_key=true
 ```
 
 `key_rotation` ∈ `rotated` | `no_key` (người này chưa từng có key — không cắt được gì) |
-`unsupported` (deploy không cấu hình LiteLLM) | `failed` | `not_requested`. Việc thu hồi vẫn có
-hiệu lực kể cả khi rotate thất bại; đừng gộp hai kết quả này làm một, vì nói với người vừa thu
-hồi cái laptop bị mất rằng "quyền dùng model đã bị cắt" trong khi nó chưa bị cắt còn tệ hơn là
-không nói gì.
+`failed` | `not_requested`. Việc thu hồi vẫn có hiệu lực kể cả khi rotate thất bại; đừng gộp
+hai kết quả này làm một, vì nói với người vừa thu hồi cái laptop bị mất rằng "quyền dùng model
+đã bị cắt" trong khi nó chưa bị cắt còn tệ hơn là không nói gì.
 
 Ba quy tắc phải giữ nếu bạn tự viết lại phía server:
 
@@ -453,21 +451,7 @@ Ba quy tắc phải giữ nếu bạn tự viết lại phía server:
    chỉ còn đúng một máy thì key mới không có đường về: không còn máy nào để lấy nó. Chặn ở
    **service**, không phải bằng cách ẩn nút, vì client nào cũng gọi được API.
 
-### 6.5 Sync (tóm tắt — chỉ cần khi sản phẩm có đồng bộ lịch sử)
-
-- `POST /v1/sync/push` `{"documents": [{kind, doc_id, updated_at, deleted, payload}]}` →
-  `{accepted, rejected, cursor, results[]}`. **Mỗi document được trả lời riêng**; một document
-  hỏng không làm hỏng cả lô, và client xoá khỏi outbox trong cả hai trường hợp — gửi lại một
-  document đã bị từ chối vì sai định dạng chỉ tạo ra đúng lời từ chối đó mãi mãi.
-- `GET /v1/sync/changes?since=N` → `{documents[], cursor, has_more}`. `has_more` cho một máy
-  vừa cài xong hút hết lịch sử ngay, thay vì mỗi chu kỳ poll một trang.
-- Thứ tự feed do **`seq` của server** quyết định (bộ đếm theo từng account), `updated_at` là
-  đồng hồ của **client** và chỉ dùng để phá hoà khi hai bên cùng ghi một document. Lệch đồng hồ
-  giữa hai laptop vì thế không đảo được thứ tự feed.
-- `cursor` trong response của **push** chỉ để chẩn đoán. Client lấy nó làm cursor để pull là
-  bước qua mất những gì máy khác commit xen vào giữa.
-
-### 6.6 Bảng mã lỗi — và client phải làm gì
+### 6.5 Bảng mã lỗi — và client phải làm gì
 
 Body lỗi luôn phẳng, `error` cách một lần truy cập field:
 
@@ -491,10 +475,12 @@ và code của bạn sẽ hỏng vào đúng ngày đó.
 | 503 | `store_unavailable` | DB không với tới được | giữ nguyên mọi thứ, thử lại |
 | 503 | `litellm_unconfigured` | deploy chưa cấu hình proxy | **giữ key đang có**; operator phải sửa |
 | 503 | `litellm_unavailable` | proxy không với tới được; **không mint gì cả** | giữ key đang có, thử lại |
-| 502 | `litellm_refused` | proxy trả lời và từ chối | báo lỗi, đây là vấn đề của request |
-| 503 | `key_unreadable` | có key đã lưu nhưng service không mở nổi (sai KEK) | giữ key đang có; operator phải khôi phục KEK |
-| 413 | `payload_too_large` | lô push quá lớn | chia nhỏ và gửi lại, **đừng vứt** |
-| 400 | `invalid_push` / `invalid_cursor` | body/cursor sai hình dạng | lỗi lập trình |
+| 424 | `litellm_refused` | proxy trả lời và từ chối | báo lỗi, đây là vấn đề của request |
+
+Bảng trên là phần mọi client đều gặp. Các mã còn lại của dịch vụ khoá AI (`403 client_not_allowed`,
+`access_blocked`, `issuance_disabled`, `license_*`; `424 no_grantable_models`;
+`429 too_many_rotations`) nằm trong `docs/AI-KEYS.md` của AgentX-sso; WebMate xử lý `license_*`
+như mục *AgentX license* trong `docs/workmate-integration.md`.
 
 Chú ý `litellm_unconfigured` là **503 chứ không phải 500**, dù đó là lỗi của operator chứ không
 phải của người gọi. 503 là status bảo laptop "giữ key mày đang có và quay lại sau" — đúng
@@ -504,37 +490,41 @@ chính xác điều nên xảy ra trong lúc có người đi sửa cái deploy.
 
 ## 7. Server sinh key như thế nào
 
-Chi tiết này cần khi bạn tự vận hành service, hoặc khi phải giải thích một hoá đơn LiteLLM.
+Chi tiết này cần khi phải giải thích một hoá đơn LiteLLM hoặc một câu trả lời lạ của server.
+Server là dịch vụ khoá AI của AgentX SSO (code: `console/sso_console/ai/`); vận hành nó — bật,
+cấu hình, đổi KEK, chọn model — nằm ở `docs/AI-KEYS.md` của repo AgentX-sso.
 
-**Alias** = `{key_alias_prefix}-{account_slug}`, mặc định prefix `agentx-workmate`.
-`account_slug` = `{label}-{sha256(sub)[:8]}`, với `label` là username (hoặc phần trước `@` của
-email) đã hạ hoa thường, thay mọi ký tự ngoài `[a-z0-9]` bằng `-`, cắt còn 24 ký tự. Digest lấy
-trên `sub` nên slug sống sót qua việc đổi tên và đổi email; label chỉ để người đọc. Slug này
+**`account`** (slug) = `{label}-{sha256(sub)[:8]}`, với `label` là username (hoặc phần trước `@`
+của email) đã hạ hoa thường, thay mọi ký tự ngoài `[a-z0-9]` bằng `-`, cắt còn 24 ký tự. Digest
+lấy trên `sub` nên slug sống sót qua việc đổi tên và đổi email; label chỉ để người đọc. Slug này
 phải **giống hệt nhau** ở server, ở CLI và ở đường dẫn home trên máy — nếu sản phẩm mới cũng
-sinh slug, hãy sao chép đúng công thức.
+sinh slug, hãy sao chép đúng công thức. **Alias** (`key_alias`) chỉ là nhãn để đọc trong console
+LiteLLM (R5): đừng suy ra gì từ dạng của nó.
 
-**Model được cấp**: mặc định lọc theo `model_info.mode` do proxy khai, theo thứ tự
-`chat, completion, image_generation, video_generation`. Thứ tự này *load-bearing*: LiteLLM lưu
-lại nó, và entry đầu tiên trở thành `default_model`. Vì thế mở app là rơi vào một model nói
-chuyện được, mà không cần ghi id model nào xuống laptop.
+**Model được cấp** do quản trị viên chọn ở SSO Console → Mô hình AI; chính sách đầu tiên được
+dựng theo `model_info.mode` do proxy khai: `chat, completion, image_generation, video_generation`.
+`models` đi đúng thứ tự trong bộ chọn và entry đầu tiên là `default_model`, nên mở app là rơi vào
+một model nói chuyện được mà không cần ghi id model nào xuống laptop. Model của từng tính năng
+(`web_search_model`, `image_model`, `vision_model`, `speech_model`, `transcription_model`) đi kèm
+key nhưng không bao giờ vào bộ chọn model.
 
 Không lọc thì proxy sẽ đẩy cả embedding và rerank model vào model picker — chọn phải một cái là
 hỏng giữa chừng cuộc hội thoại, và trông như proxy hỏng chứ không như chọn nhầm.
 
-Khi proxy **không nói được** nó phục vụ gì: **raise**, không fallback sang "key không giới hạn".
-Fallback đúng kiểu đó là cách admin key từng đi vào mọi installer.
+Khi proxy không phục vụ model nào trong số đã chọn: `424 no_grantable_models`, không fallback
+sang "key không giới hạn". Fallback đúng kiểu đó là cách admin key từng đi vào mọi installer.
 
 **Thứ tự khi mint là mint → lưu → xoá cái cũ**, và không hoán đổi được. Xoá trước nghĩa là lưu
 hỏng thì cả nhà mất key; xoá sau nghĩa là trường hợp xấu nhất chỉ còn một key mồ côi trên proxy
 mà operator nhìn thấy và dọn được.
 
-**Envelope**: AES-256-GCM, nonce 12 byte, KEK 32 byte base64 từ env, AAD = `subject`, `kek_id`
-lưu theo row. Xoay KEK = đặt KEK mới + giữ KEK cũ ở `*_PREVIOUS` → mỗi row tự chuyển sang KEK
-mới ở lần chủ nó xin key kế tiếp (best-effort, thất bại chỉ tốn một lần thử lại và không bao
-giờ làm hỏng lượt đọc). Không có cửa sổ downtime.
+**Envelope**: AES-256-GCM, nonce 12 byte, KEK 32 byte base64 từ env (`SSO_AI_KEK`), AAD =
+`subject`, `kek_id` lưu theo row. Đổi KEK = đặt KEK mới + giữ KEK cũ ở `SSO_AI_KEK_PREVIOUS` →
+row trên KEK cũ được bọc lại ở lần chủ nó xin key kế tiếp, rồi `sso-console ai rewrap` dọn nốt.
+Không có cửa sổ downtime.
 
-**Mất KEK là mất hết**: các row còn đó và không gì mở được. Không có đường khôi phục ngoài việc
-xoá row để mọi người được mint lại. **Sao lưu KEK ra ngoài host đó.**
+**Mất KEK thì mỗi người bị đổi key một lần**: row không mở được thì service tự cấp key thay thế,
+không ai bị khoá ngoài. **Sao lưu KEK ra ngoài host đó.**
 
 ---
 
@@ -577,47 +567,28 @@ Sidecar chỉ đủ để nhận ra công việc của chính mình ở lần kh
 
 ## 9. Cấu hình
 
-### Phía client (`config.yaml`, thuộc **install root** chứ không thuộc home của từng account)
+### Phía client
 
-```yaml
-accounts:
-  litellm:
-    enabled: true
-    mode: "second_brain"        # second_brain | broker(deprecated) | direct(deprecated)
-    provider_name: "litellm"
-    key_alias_prefix: "agentx-workmate"
-    discover_models: true
-    request_timeout_seconds: 20
-  second_brain:
-    base_url: "https://brain.example.com"
-    request_timeout_seconds: 15
-```
+Địa chỉ dịch vụ khoá AI là **chính sách của bản cài**, không phải sở thích cá nhân.
 
-Đây là **chính sách của máy**, không phải sở thích cá nhân: đọc nó từ config của từng account
-sẽ làm tính năng chết hẳn, vì home của account được tạo lúc đăng nhập và chưa có config.yaml —
-section trả về rỗng và không bao giờ có gì được provision.
+- **WebMate**: `services.keysBaseUrl` trong `brand/brand.config.json`. `scripts/brand-build.mjs`
+  chuẩn hoá nó (bỏ `/` cuối) vào `src/agentx/runtime-config.js` của bản build và **dừng build**
+  khi nó thiếu hoặc không phải HTTPS. Giá trị đã chuẩn hoá là `authority` của mỗi key đã lưu
+  trong `agentxModelCredentialsV1`: đổi giá trị thì mọi bản đã cài hỏi lại `/v1/model-key` một
+  lần (`rotate: false`).
+- **App desktop**: đọc nó từ config của **install root**, không từ home của từng account — home
+  được tạo lúc đăng nhập và chưa có config, nên section trả về rỗng và không bao giờ có gì được
+  provision.
 
-Không có `second_brain.base_url` ⇒ không provision gì và **nói rõ tên setting còn thiếu**. Nó
-**không** fallback sang mint tại chỗ — fallback chính là cách admin key đi xuống laptop lần đầu.
+Không có base URL ⇒ không provision gì và **nói rõ tên setting còn thiếu**. Nó **không** fallback
+sang mint tại chỗ — fallback chính là cách admin key đi xuống laptop lần đầu.
 
-### Phía service (biến môi trường)
+### Phía service
 
-| Biến | Bắt buộc | Ghi chú |
-|---|---|---|
-| `AGENTX_BRAIN_DATABASE_URL` | ✅ | DSN Postgres |
-| `AGENTX_BRAIN_KEK` | ✅ | base64 của 32 byte — `openssl rand -base64 32` |
-| `AGENTX_BRAIN_KEK_ID` | — | mặc định `k1`; tăng lên khi xoay KEK |
-| `AGENTX_BRAIN_KEK_PREVIOUS` / `_PREVIOUS_ID` | — | đặt cả hai trong lúc xoay KEK |
-| `AGENTX_BRAIN_LITELLM_BASE_URL` | ✅¹ | URL proxy |
-| `AGENTX_LITELLM_ADMIN_KEY` | ✅¹ | **chỉ tồn tại ở đây** |
-| `AGENTX_DASHBOARD_KEYCLOAK_BASE_URL` / `_REALM` / `_CLIENT_ID` | ✅ | phải là **đúng realm** app đăng nhập vào |
-| `AGENTX_BRAIN_KEY_MODEL_MODES` | — | mặc định `chat,completion,image_generation,video_generation` |
-| `AGENTX_BRAIN_KEY_ALIAS_PREFIX` | — | khi một proxy phục vụ hai fleet |
-| `AGENTX_BRAIN_MAX_PUSH_BYTES` | — | mặc định 8 MB |
-| `AGENTX_BRAIN_TOMBSTONE_RETENTION_DAYS` | — | mặc định 90 — **kéo dài chứ đừng rút ngắn** |
-
-¹ Deploy chỉ cần quản lý thiết bị được phép bỏ cả hai; `/health` sẽ báo `unconfigured` một cách
-trung thực thay vì từ chối khởi động. Route cấp key sẽ trả 503 và nói rõ.
+Mục 8 của `.env` trên máy AgentX SSO, do `scripts/ai-setup.sh` điền: `SSO_AI_DB_PASSWORD`,
+`SSO_AI_KEK` (base64 của 32 byte; thêm `SSO_AI_KEK_ID`, `SSO_AI_KEK_PREVIOUS` /
+`SSO_AI_KEK_PREVIOUS_ID` khi đổi KEK) và `SSO_LITELLM_ADMIN_KEY` — **chỉ tồn tại ở đây**. Danh sách
+đầy đủ và cách bật: `docs/AI-KEYS.md` của AgentX-sso.
 
 **Resolve config phải eager và toàn phần**: hoặc trả về object mà mọi field đều dùng được, hoặc
 raise và **gọi tên đúng cái đang thiếu**. Service khởi động xanh rồi mới phát hiện nó không có
@@ -629,19 +600,19 @@ nhìn màn hình deploy.
 ## 10. Kiểm chứng bằng curl
 
 ```bash
-BRAIN=https://brain.example.com
+KEYS=https://agentx.example.com/keys
 TOKEN=<id_token>
 DEV=$(uuidgen | tr 'A-Z' 'a-z')
 
 # 1. service sống chưa (không cần auth)
-curl -sS $BRAIN/health | jq
+curl -sS $KEYS/health | jq
 
 # 2. token có được chấp nhận không, máy này là máy nào
-curl -sS $BRAIN/v1/me \
+curl -sS $KEYS/v1/me \
   -H "Authorization: Bearer $TOKEN" -H "X-AgentX-Device: $DEV" | jq
 
 # 3. lấy key — status phải là "issued" lần đầu, "reused" mọi lần sau
-curl -sS -X POST $BRAIN/v1/model-key \
+curl -sS -X POST $KEYS/v1/model-key \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-AgentX-Device: $DEV" \
   -H "X-AgentX-Device-Name: laptop cua toi" \
@@ -649,12 +620,12 @@ curl -sS -X POST $BRAIN/v1/model-key \
   -d '{"rotate": false}' | jq '.status, .default_model, .base_url'
 
 # 4. dùng key vừa nhận
-KEY=$(curl -sS -X POST $BRAIN/v1/model-key -H "Authorization: Bearer $TOKEN" \
+KEY=$(curl -sS -X POST $KEYS/v1/model-key -H "Authorization: Bearer $TOKEN" \
       -H "X-AgentX-Device: $DEV" -H 'Content-Type: application/json' -d '{}' | jq -r .key)
 curl -sS https://litellm.example.com/v1/models -H "Authorization: Bearer $KEY" | jq '.data[].id'
 
 # 5. thiếu device header phải ra 400 device_header_missing
-curl -sS -X POST $BRAIN/v1/model-key -H "Authorization: Bearer $TOKEN" \
+curl -sS -X POST $KEYS/v1/model-key -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{}' | jq
 ```
 
@@ -712,30 +683,26 @@ bug mà kiến trúc này sinh ra để sửa.
 | Ném lỗi khi keychain khoá | Vòng lặp đăng nhập vô tận, mà lần exchange nào cũng thành công |
 | Ghi plaintext key vào `config.yaml` | Key nằm trong file được commit / được sync / được đọc bởi mọi tiến trình |
 | Pin `default_model` bằng hằng số ship kèm | Installer pin `Qwen3.5-35B`, proxy đã chuyển 3.6 ⇒ app mở lên vào model group không tồn tại, và lỗi nêu tên model chứ không nêu cái default cũ đã chọn nó |
-| Rút ngắn thời gian giữ tombstone | Máy offline lúc xoá sẽ đẩy row đã xoá quay lại, hồi sinh nó ở mọi nơi |
-| Restore DB về điểm cũ | `doc_seq` lùi lại trong khi cursor của client thì không ⇒ client đứng im **vĩnh viễn**. Cách sửa: reset cursor client về 0 (pull lại toàn bộ là an toàn, apply lại một document là no-op) |
 
 ---
 
-## 13. Bản tham chiếu trong repo AgentX-Workmate
+## 13. Bản tham chiếu
 
 Khi cần đọc code thật:
 
-| Việc | File |
-|---|---|
-| Helper OIDC thuần (URL, discovery, parse token) | `apps/desktop/electron/keycloak-oidc.ts` |
-| Vỏ I/O: loopback + browser + exchange | `apps/desktop/electron/keycloak-login.ts` |
-| Thang session/refresh | `apps/desktop/electron/keycloak-desktop-session.ts` |
-| Device id | `apps/desktop/electron/device-id.ts` |
-| Verify token phía server (JWKS, aud, iss) | `plugins/dashboard_auth/keycloak/__init__.py` |
-| Auth + đăng ký device của service | `second_brain/auth.py` |
-| Kho key: mint-once, envelope, rotate | `second_brain/keys.py` |
-| Device registry + thu hồi | `second_brain/devices.py` |
-| Mã lỗi trên wire | `second_brain/errors.py` |
-| Config service | `second_brain/settings.py` |
-| Schema DB | `second_brain/store/migrations/0001_init.sql` |
-| HTTP client phía laptop | `hermes_cli/second_brain_client.py` |
-| Thang provisioning phía laptop | `hermes_cli/account_provisioning.py` |
-| Route account của backend cục bộ | `hermes_cli/web_routers/accounts.py` |
-| Sinh account slug | `hermes_cli/accounts.py` (`account_slug_for_identity`) |
-| Hướng dẫn vận hành | `deploy/second-brain/README.md` |
+| Việc | Repo | File |
+|---|---|---|
+| Client trong trình duyệt: PKCE, thang refresh, device id, `/v1/model-key`, `/v1/license` | AgentX-WebMate | `brand/additions/common/src/agentx/cloud-service.js` |
+| Helper OIDC thuần (URL, discovery, parse token) | AgentX-Workmate | `apps/desktop/electron/keycloak-oidc.ts` |
+| Vỏ I/O: loopback + browser + exchange | AgentX-Workmate | `apps/desktop/electron/keycloak-login.ts` |
+| Thang session/refresh | AgentX-Workmate | `apps/desktop/electron/keycloak-desktop-session.ts` |
+| Device id | AgentX-Workmate | `apps/desktop/electron/device-id.ts` |
+| Thang provisioning phía laptop | AgentX-Workmate | `hermes_cli/account_provisioning.py` |
+| Route account của backend cục bộ | AgentX-Workmate | `hermes_cli/web_routers/accounts.py` |
+| Sinh account slug | AgentX-Workmate | `hermes_cli/accounts.py` (`account_slug_for_identity`) |
+| Route của service, verify token (JWKS, aud, iss), đăng ký device | AgentX-sso | `console/sso_console/ai/keys_app.py`, `identity.py` |
+| Kho key: mint-once, rotate, thu hồi | AgentX-sso | `console/sso_console/ai/core.py`, `store.py` |
+| Envelope | AgentX-sso | `console/sso_console/ai/vault.py` |
+| Config service | AgentX-sso | `console/sso_console/ai/settings.py` |
+| Schema DB | AgentX-sso | `console/sso_console/ai/migrations/` |
+| Hướng dẫn vận hành | AgentX-sso | `docs/AI-KEYS.md` |

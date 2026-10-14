@@ -211,41 +211,13 @@ function normalizeScopes(value) {
   return unique.join(' ');
 }
 
-export function selectPublicOidcProvider(payload) {
-  const providers = Array.isArray(payload?.providers) ? payload.providers : [];
-  const provider = providers.find((entry) => {
-    const native = entry?.native_oidc;
-    return native && typeof native === 'object' && native.confidential === false;
-  });
-  if (!provider) {
-    throw new AgentXCloudError(
-      'oidc_provider_unavailable',
-      'Second Brain không công bố public native_oidc provider.',
-    );
-  }
-  const native = provider.native_oidc;
-  const issuer = normalizeHttpsBaseUrl(native.issuer, 'OIDC issuer');
-  const clientId = String(native.client_id || '').trim();
-  if (!clientId) {
-    throw new AgentXCloudError('invalid_configuration', 'OIDC provider thiếu client_id.');
-  }
-  return {
-    name: String(provider.name || 'keycloak'),
-    displayName: String(provider.display_name || 'AgentX'),
-    issuer,
-    clientId,
-    scopes: normalizeScopes(native.scopes),
-  };
-}
-
 function configuredOidcProvider(config) {
   const issuerValue = String(config?.oidcIssuer || '').trim();
   const clientId = String(config?.oidcClientId || '').trim();
-  if (!issuerValue && !clientId) return null;
   if (!issuerValue || !clientId) {
     throw new AgentXCloudError(
       'invalid_configuration',
-      'OIDC trực tiếp yêu cầu cả issuer và client_id.',
+      'OIDC yêu cầu cả issuer và client_id.',
     );
   }
   return {
@@ -279,7 +251,6 @@ function serviceErrorFromResponse(response, body, fallbackCode = 'service_reques
     'store_unavailable',
     'litellm_unconfigured',
     'litellm_unavailable',
-    'key_unreadable',
   ].includes(code);
   // A license refusal always means read-only, even when its body carries no
   // license object this build can read.
@@ -334,10 +305,7 @@ export function createAgentXCloudService(options = {}) {
     throw new AgentXCloudError('invalid_configuration', 'Fetch hoặc Web Crypto chưa sẵn sàng.');
   }
 
-  const secondBrainBaseUrl = normalizeHttpsBaseUrl(
-    config.secondBrainBaseUrl,
-    'Second Brain base URL',
-  );
+  const keysBaseUrl = normalizeHttpsBaseUrl(config.keysBaseUrl, 'URL dịch vụ khóa AI');
   const configuredLiteLlmBaseUrl = normalizeHttpsBaseUrl(
     config.litellmBaseUrl,
     'LiteLLM base URL',
@@ -457,22 +425,8 @@ export function createAgentXCloudService(options = {}) {
   }
 
   async function discoverOidc() {
-    let advertised = configuredOidcProvider(config);
-    if (!advertised) {
-      const providersUrl = new URL(
-        String(config.oidcProvidersPath || '/api/auth/providers').replace(/^\//, ''),
-        `${secondBrainBaseUrl}/`,
-      ).toString();
-      const providersResponse = await fetchWithTimeout(providersUrl, {
-        headers: { Accept: 'application/json' },
-      });
-      const providersBody = await responseBody(providersResponse);
-      if (!providersResponse.ok) {
-        throw serviceErrorFromResponse(providersResponse, providersBody, 'oidc_discovery_failed');
-      }
-      advertised = selectPublicOidcProvider(providersBody.json);
-    }
-    const discoveryUrl = `${advertised.issuer}/.well-known/openid-configuration`;
+    const provider = configuredOidcProvider(config);
+    const discoveryUrl = `${provider.issuer}/.well-known/openid-configuration`;
     const discoveryResponse = await fetchWithTimeout(discoveryUrl, {
       headers: { Accept: 'application/json' },
     });
@@ -485,7 +439,7 @@ export function createAgentXCloudService(options = {}) {
       );
     }
     const document = discoveryBody.json;
-    if (!sameIssuer(document.issuer, advertised.issuer)) {
+    if (!sameIssuer(document.issuer, provider.issuer)) {
       throw new AgentXCloudError(
         'issuer_mismatch',
         'Issuer trong discovery document không khớp issuer đã cấu hình.',
@@ -501,7 +455,7 @@ export function createAgentXCloudService(options = {}) {
       );
     }
     return {
-      ...advertised,
+      ...provider,
       authorizationEndpoint: document.authorization_endpoint,
       tokenEndpoint: document.token_endpoint,
       endSessionEndpoint: isSecureEndpoint(document.end_session_endpoint)
@@ -1139,7 +1093,7 @@ export function createAgentXCloudService(options = {}) {
     let response;
     try {
       const device = await deviceIdentity();
-      response = await fetchWithTimeout(`${secondBrainBaseUrl}/v1/license`, {
+      response = await fetchWithTimeout(`${keysBaseUrl}/v1/license`, {
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${session.idToken}`,
@@ -1344,7 +1298,7 @@ export function createAgentXCloudService(options = {}) {
 
   async function requestModelKey(session, { rotate = false } = {}) {
     const device = await deviceIdentity();
-    const response = await fetchWithTimeout(`${secondBrainBaseUrl}/v1/model-key`, {
+    const response = await fetchWithTimeout(`${keysBaseUrl}/v1/model-key`, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -1382,7 +1336,7 @@ export function createAgentXCloudService(options = {}) {
     if (!key) {
       throw new AgentXCloudError(
         'invalid_model_key_response',
-        'Second Brain trả về khóa mô hình không hợp lệ.',
+        'Dịch vụ khóa AI trả về khóa mô hình không hợp lệ.',
       );
     }
     // LiteLLM says what is live; the key service says which of it is for chat.
@@ -1391,7 +1345,7 @@ export function createAgentXCloudService(options = {}) {
     const catalog = await discoverGatewayCatalog(key, baseUrl);
     return {
       subject: session.user.subject,
-      authority: secondBrainBaseUrl,
+      authority: keysBaseUrl,
       key,
       baseUrl,
       ...modelsForGrant(catalog, grant, { model: grant.defaultModel }),
@@ -1422,7 +1376,7 @@ export function createAgentXCloudService(options = {}) {
     const cached = records.find((record) => credentialIsUsable(
       record,
       session.user.subject,
-      secondBrainBaseUrl,
+      keysBaseUrl,
     ));
     if (cached && options.rotate !== true) {
       const probe = await probeCredential(cached);
@@ -1591,7 +1545,6 @@ export function createAgentXCloudService(options = {}) {
         expiresAt: null,
         device: { id: device.id, name: device.name },
         redirectUri: redirectUris[0],
-        secondBrainBaseUrl,
         configuredLiteLlmBaseUrl,
       };
     }
@@ -1608,7 +1561,6 @@ export function createAgentXCloudService(options = {}) {
       expiresAt: session.expiresAt,
       device: { id: device.id, name: device.name },
       redirectUri: session.redirectUri || redirectUris[0],
-      secondBrainBaseUrl,
       configuredLiteLlmBaseUrl,
     };
   }
