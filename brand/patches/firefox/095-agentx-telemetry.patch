@@ -36,7 +36,39 @@ diff --git a/src/agent/agent.js b/src/agent/agent.js
      // When the planner gate runs, start the trace up-front so the planner LLM
      // call is recorded under this run; otherwise it's started just before the
      // loop. _startTraceRun is the single source of truth (no duplicate tab
-@@ -21815,6 +21817,7 @@
+@@ -21262,6 +21264,7 @@
+             }
+             const retryCode = this._traceErrorCodeFor(e2);
+             traceFailureCode = retryCode;
++            try { this.usageReporter?.failure?.(tabId, e2, retryCode); } catch {}
+             _traceStatus = 'error';
+             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: retryCode });
+             onUpdate('error', { message: `Context still too large after trimming: ${e2.message}` });
+@@ -21272,6 +21275,7 @@
+         } else {
+           if (e?.isAskStreamTerminalError === true) {
+             traceFailureCode = this._traceErrorCodeFor(e);
++            try { this.usageReporter?.failure?.(tabId, e, traceFailureCode); } catch {}
+             _traceStatus = 'error';
+             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
+             onUpdate('error', { message: e.message });
+@@ -21303,6 +21307,7 @@
+             }
+             traceFailureCode = this._traceErrorCodeFor(e2);
+             _traceStatus = 'error';
++            try { this.usageReporter?.failure?.(tabId, e2, traceFailureCode); } catch {}
+             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
+             onUpdate('error', { message: e2.message });
+             finalResponse = `Error communicating with LLM: ${e2.message}`;
+@@ -21593,6 +21598,7 @@
+       const message = formatErrorMessage(error);
+       _traceStatus = 'error';
+       traceFailureCode = this._traceErrorCodeFor(error);
++      try { this.usageReporter?.failure?.(tabId, error, traceFailureCode); } catch {}
+       finalResponse = `Error: ${message}`;
+       if (runId) {
+         const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message, traceFailureCode);
+@@ -21815,6 +21821,7 @@
      // loop — runs inside this try so the finally always ends the trace run and
      // clears currentRunId, even on an early throw during setup. (#2)
      try {
@@ -44,3 +76,19 @@ diff --git a/src/agent/agent.js b/src/agent/agent.js
      let plannerTabInfo = null;
      const readScopePreflight = !selectionOnly && !standaloneChatRun && this._readCompletenessNeedsScopeClassification(tabId);
      if ((this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun) || readScopePreflight) {
+@@ -22245,6 +22252,7 @@
+         messages.push({ role: 'assistant', content: errMsg });
+         this._persist(tabId);
+         traceFailureCode = stepErrorCode;
++        try { this.usageReporter?.failure?.(tabId, e, stepErrorCode); } catch {}
+         return finish(errMsg, 'error');
+       }
+     }
+@@ -22271,6 +22279,7 @@
+       const message = formatErrorMessage(error);
+       _traceStatus = 'error';
+       traceFailureCode = this._traceErrorCodeFor(error);
++      try { this.usageReporter?.failure?.(tabId, error, traceFailureCode); } catch {}
+       finalResponse = `Error: ${message}`;
+       if (runId) {
+         trace.recordError(runId, null, 'agent', message, traceFailureCode);

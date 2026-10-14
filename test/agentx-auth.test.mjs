@@ -3544,7 +3544,8 @@ test('both backgrounds put the license in front of every AI entry point', async 
     assert.match(background, /import \{ createAgentXLicenseGate \} from '\.\/agentx\/license-gate\.js';/, target);
     assert.match(background, new RegExp(`const agentxLicense = createAgentXLicenseGate\\(\\{ api: ${api}, locale: \\(\\) => selectionShortcutLocale \\}\\);`), target);
     // Every agent run: chat, streaming, continuations, replays, scheduled and bridge runs.
-    assert.match(background, /agent\.setRunStartGuard\(async \(tabId\) => \{\n  await teacherRunInterlock\.guardRunStart\(tabId\);\n  await agentxLicense\.assertAllowed\(\);\n\}\);/, target);
+    // ...and a chat turn it refuses is counted in the usage metrics, with the license's code.
+    assert.match(background, /agent\.setRunStartGuard\(async \(tabId, entry\) => \{\n  await teacherRunInterlock\.guardRunStart\(tabId\);\n  try \{\n    await agentxLicense\.assertAllowed\(\);\n  \} catch \(error\) \{\n[^\n]*\n    if \(entry\?\.kind === 'interactive'\) void agent\.usageReporter\?\.refused\(error\)\?\.catch\(\(\) => \{\}\);\n    throw error;\n  \}\n\}\);/, target);
     assert.doesNotMatch(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\);/, target);
     // Scheduled and watch jobs are held, and released when a license answer lands.
     assert.match(background, /runGate: agentxLicense\.userRefusal,\n\}\);\nagent\.setScheduler\(scheduler\);/, target);

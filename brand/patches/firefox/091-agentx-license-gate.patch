@@ -9,7 +9,7 @@ diff --git a/src/background.js b/src/background.js
  import { ScheduledJobManager } from './agent/scheduler.js';
  import {
    compileWorkflowFromDemonstration,
-@@ -164,7 +165,15 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
+@@ -164,7 +165,21 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
      || detachedRunStarts.has(tabId)
      || scheduler.isRunning(tabId),
  });
@@ -19,14 +19,20 @@ diff --git a/src/background.js b/src/background.js
 +// would answer. No agent run starts; the other ways in are held or refused
 +// below (scheduled jobs, memory extraction, compaction, connection tests).
 +const agentxLicense = createAgentXLicenseGate({ api: browser, locale: () => selectionShortcutLocale });
-+agent.setRunStartGuard(async (tabId) => {
++agent.setRunStartGuard(async (tabId, entry) => {
 +  await teacherRunInterlock.guardRunStart(tabId);
-+  await agentxLicense.assertAllowed();
++  try {
++    await agentxLicense.assertAllowed();
++  } catch (error) {
++    // A turn the person asked for and could not have: counted, with why (usage metrics).
++    if (entry?.kind === 'interactive') void agent.usageReporter?.refused(error)?.catch(() => {});
++    throw error;
++  }
 +});
  const runCaptureController = createRunCaptureController({
    api: browser,
    unsupportedRecordingMessage: 'Tab recording is not supported in Firefox.',
-@@ -189,9 +198,17 @@ const scheduler = new ScheduledJobManager({
+@@ -189,9 +204,17 @@ const scheduler = new ScheduledJobManager({
    showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
    hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
    playWatchAlert: (payload) => playWatchAlert(browser, payload),
@@ -44,7 +50,7 @@ diff --git a/src/background.js b/src/background.js
  
  const MAX_AGENT_STEPS_DEFAULT = 130;
  const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
-@@ -726,6 +743,9 @@ async function drainUserMemoryExtractionQueue() {
+@@ -726,6 +749,9 @@ async function drainUserMemoryExtractionQueue() {
          await removeUserMemoryExtractionJob(job.id);
          continue;
        }
@@ -54,7 +60,7 @@ diff --git a/src/background.js b/src/background.js
  
        try {
          await customSkillsReady;
-@@ -2727,6 +2747,8 @@ async function handleMessage(msg, sender) {
+@@ -2727,6 +2753,8 @@ async function handleMessage(msg, sender) {
      case 'compact_conversation': {
        const tabId = msg.tabId || sender.tab?.id;
        if (!tabId) return { ok: false, error: 'No tab ID' };
@@ -63,7 +69,7 @@ diff --git a/src/background.js b/src/background.js
        return { ok: true, ...(await agent.compactConversation(tabId)) };
      }
  
-@@ -3101,14 +3123,23 @@ async function handleMessage(msg, sender) {
+@@ -3101,14 +3129,23 @@ async function handleMessage(msg, sender) {
      }
  
      case 'test_provider': {
